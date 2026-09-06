@@ -1,0 +1,101 @@
+<!-- templates/eleve/devoir.html -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>ClasseXP - Devoir en cours</title>
+    <style>
+        body { 
+            font-family: 'Quicksand', sans-serif; 
+            background-color: #1e1e2e; 
+            color: #cdd6f4; 
+            padding: 2rem; 
+        }
+        .devoir-container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: #313244; 
+            padding: 2.5rem; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 15px rgba(0,0,0,0.3); 
+        }
+        .timer { 
+            font-size: 3.5rem; 
+            font-weight: bold; 
+            color: #f38ba8; 
+            text-align: center; 
+            margin: 1.5rem 0; 
+            font-family: monospace; 
+            letter-spacing: 2px;
+        }
+        .btn { 
+            display: block; 
+            width: 100%; 
+            padding: 12px; 
+            background: #89b4fa; 
+            color: #11111b; 
+            border: none; 
+            border-radius: 6px; 
+            font-size: 1.1rem; 
+            font-weight: bold;
+            cursor: pointer; 
+            text-align: center; 
+            text-decoration: none; 
+            margin-bottom: 1rem; 
+        }
+        .btn:hover { background: #74c7ec; }
+        .btn-submit { background: #a6e3a1; }
+        .btn-submit:hover { background: #94e2d5; }
+    </style>
+</head>
+<body>
+
+<nav><a href="/connexion">Se connecter</a> · <a href="/inscription">Créer un compte</a></nav>
+
+<div class="devoir-container">
+    <h2>Mathématiques - Première S1</h2>
+    <p><strong>Sujet :</strong> Devoir de synthèse (Fonctions et Dérivées)</p>
+
+    <div class="timer" id="chrono">03:00:00</div>
+
+    <a href="/uploads/sujets/devoir_math.pdf" class="btn" target="_blank">📄 Consulter le sujet</a>
+
+    <form action="/rendre_copie" method="POST" enctype="multipart/form-data">
+        <label for="copie">Déposer ma copie (PDF, JPG, PNG) :</label><br><br>
+        <input type="file" id="copie" name="copie" accept=".pdf,.jpg,.png" required><br><br>
+        <button type="submit" class="btn btn-submit">✅ Rendre le devoir</button>
+    </form>
+</div>
+
+<script>
+    // Dans le vrai projet Flask, cette valeur sera injectée dynamiquement via Jinja2
+    // Exemple : let tempsRestant = {{ temps_restant_secondes }};
+    let tempsRestant = 10800; 
+    const chronoElement = document.getElementById('chrono');
+
+    function mettreAJourChrono() {
+        if (tempsRestant <= 0) {
+            chronoElement.innerHTML = "00:00:00";
+            alert("Le temps est écoulé !");
+            // Ici, on pourrait désactiver le bouton d'envoi ou soumettre automatiquement
+            document.querySelector('.btn-submit').disabled = true;
+            return;
+        }
+
+        const heures = Math.floor(tempsRestant / 3600);
+        const minutes = Math.floor((tempsRestant % 3600) / 60);
+        const secondes = tempsRestant % 60;
+
+        chronoElement.innerHTML =
+            String(heures).padStart(2, '0') + ":" +
+            String(minutes).padStart(2, '0') + ":" +
+            String(secondes).padStart(2, '0');
+
+        tempsRestant--;
+        setTimeout(mettreAJourChrono, 1000);
+    }
+
+    mettreAJourChrono();
+</script>
+</body>
+</html>

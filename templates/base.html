@@ -77,7 +77,17 @@
   {% else %}
     <main id="main-content">{% block public_content %}{% endblock %}</main>
   {% endif %}
-  <div class="toast" data-toast role="status" aria-live="polite"></div>
+  {% set toast_icons = {'success': '✓', 'error': '✕', 'warning': '!', 'info': 'i'} %}
+  <div class="toast-container" data-toast-container aria-live="polite" aria-atomic="false">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      {% set toast_category = category if category in toast_icons else 'info' %}
+      <div class="toast toast--{{ toast_category }}" data-toast data-category="{{ toast_category }}" role="{{ 'alert' if toast_category == 'error' else 'status' }}">
+        <span class="toast-icon" aria-hidden="true">{{ toast_icons[toast_category] }}</span>
+        <p>{{ message }}</p>
+        <button class="toast-close" type="button" data-toast-close aria-label="Fermer la notification">×</button>
+      </div>
+    {% endfor %}
+  </div>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>

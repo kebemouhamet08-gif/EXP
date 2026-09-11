@@ -76,7 +76,7 @@
           <div class="assignment-duration">{{ icon('clock') }}<span><small>Durée</small>{{ devoir['duree'] // 60 }} min</span></div>
           <div class="assignment-action">
             {% if devoir['note'] is not none %}<span class="grade-value">{{ devoir['note']|round(2) }}<small>/20</small></span>
-            {% elif devoir['statut'] == 'TERMINE' %}<span class="badge badge-success">Copie remise</span>
+            {% elif devoir['statut'] == 'TERMINE' %}<span class="submission-confirmation"><span class="badge badge-success">✓ Copie remise</span>{% if devoir['heure_fin'] %}<small>Remise à {{ devoir['heure_fin'][11:16] }}</small>{% endif %}</span>
             {% elif devoir['commence'] %}<a class="button button-primary button-compact" href="{{ url_for('voir_devoir', devoir_id=devoir['id']) }}">Continuer {{ icon('arrow') }}</a>
             {% else %}<form method="post" action="{{ url_for('commencer_devoir', devoir_id=devoir['id']) }}"><button class="button button-primary button-compact" type="submit">Commencer {{ icon('arrow') }}</button></form>{% endif %}
           </div>

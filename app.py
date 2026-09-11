@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Flask, abort, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from flask_login.config import COOKIE_DURATION, COOKIE_HTTPONLY, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE
 from flask_login.utils import encode_cookie
@@ -349,6 +349,7 @@ def inscription():
                 'auth.html', mode='inscription', compte_existant=True,
                 error='Un compte existe deja avec cette adresse email.',
             )
+        flash('Compte créé avec succès. Vous pouvez maintenant vous connecter.', 'success')
         return redirect(url_for('connexion'))
 
     return render_template('auth.html', mode='inscription')
@@ -518,6 +519,9 @@ def external_callback(provider):
                  int(profile.get('email_verified', False))),
             )
             db.commit()
+            flash(f"{PROVIDERS[provider]['label']} a été lié à votre compte.", 'success')
+        else:
+            flash(f"{PROVIDERS[provider]['label']} est déjà lié à votre compte.", 'info')
         return redirect(url_for('mon_compte'))
 
     if identity is not None:
@@ -586,6 +590,7 @@ def finaliser_compte():
                 return external_identity_error('Cette identite est deja associee a un compte.', 409)
             utilisateur = db.execute('SELECT * FROM utilisateurs WHERE id = ?', (cursor.lastrowid,)).fetchone()
             replace_login(utilisateur, remember=True)
+            flash('Compte ClasseXP créé avec succès.', 'success')
             return redirect(url_for('dashboard'))
     return render_template('oauth_finalize.html', pending=pending, error=error)
 
@@ -623,6 +628,7 @@ def lier_compte_existant():
                 db.rollback()
                 return external_identity_error('Cette identite est deja associee a un compte.', 409)
             replace_login(utilisateur, remember=True)
+            flash(f"{PROVIDERS[pending['provider']]['label']} a été lié à votre compte.", 'success')
             return redirect(url_for('mon_compte'))
     return render_template('oauth_link_existing.html', pending=pending, error=error)
 
@@ -660,6 +666,7 @@ def delier_fournisseur(provider):
         (current_user.id, provider),
     )
     db.commit()
+    flash(f"{PROVIDERS[provider]['label']} a été délié de votre compte.", 'success')
     return redirect(url_for('mon_compte'))
 
 
@@ -758,6 +765,7 @@ def nouvelle_classe():
         db = get_db()
         db.execute('INSERT INTO classes (nom, professeur_id, code) VALUES (?, ?, ?)', (nom, current_user.id, code))
         db.commit()
+        flash('Classe créée avec succès.', 'success')
         return redirect(url_for('dashboard_professeur'))
     return render_template('formulaire.html', type_formulaire='classe')
 
@@ -768,10 +776,15 @@ def rejoindre_classe():
     code = ''.join(char for char in request.form.get('code', '').upper() if char.isalnum())
     classe = get_db().execute('SELECT id FROM classes WHERE code = ?', (code,)).fetchone()
     if classe is None:
-        return 'Code de classe invalide. Vérifiez le code transmis par le professeur.', 404
+        flash('Code de classe invalide. Vérifiez le code transmis par le professeur.', 'error')
+        return redirect(url_for('dashboard_eleve'))
     db = get_db()
-    db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], current_user.id))
+    cursor = db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], current_user.id))
     db.commit()
+    if cursor.rowcount:
+        flash('Classe rejointe avec succès.', 'success')
+    else:
+        flash('Vous êtes déjà membre de cette classe.', 'info')
     return redirect(url_for('dashboard_eleve'))
 
 
@@ -803,6 +816,7 @@ def nouveau_devoir():
             (titre, request.form.get('description', '').strip(), current_user.id, classe_id, nom_sujet, ouverture, duree),
         )
         db.commit()
+        flash('Devoir créé avec succès.', 'success')
         return redirect(url_for('dashboard_professeur'))
     return render_template('formulaire.html', type_formulaire='devoir', classes=classes)
 
@@ -828,24 +842,26 @@ def voir_copies(devoir_id):
 @app.post('/professeur/session/<int:session_id>/noter')
 @role_requis('PROFESSEUR')
 def noter_copie(session_id):
+    db = get_db()
+    examen = db.execute(
+        '''SELECT s.id, s.devoir_id FROM sessions_examen s JOIN devoirs d ON d.id = s.devoir_id
+           WHERE s.id = ? AND d.professeur_id = ?''',
+        (session_id, current_user.id),
+    ).fetchone()
+    if examen is None:
+        return 'Copie introuvable.', 404
     note = request.form.get('note', '').strip()
     try:
         note = float(note)
         if not 0 <= note <= 20:
             raise ValueError
     except ValueError:
-        return 'La note doit etre comprise entre 0 et 20.', 400
-    db = get_db()
-    examen = db.execute(
-        '''SELECT s.id FROM sessions_examen s JOIN devoirs d ON d.id = s.devoir_id
-           WHERE s.id = ? AND d.professeur_id = ?''',
-        (session_id, current_user.id),
-    ).fetchone()
-    if examen is None:
-        return 'Copie introuvable.', 404
+        flash('La note doit être comprise entre 0 et 20.', 'error')
+        return redirect(url_for('voir_copies', devoir_id=examen['devoir_id']))
     db.execute('UPDATE sessions_examen SET note = ?, commentaire = ? WHERE id = ?', (note, request.form.get('commentaire', '').strip(), session_id))
     db.commit()
-    return redirect(request.referrer or url_for('dashboard_professeur'))
+    flash('Note et correction enregistrées.', 'success')
+    return redirect(url_for('voir_copies', devoir_id=examen['devoir_id']))
 
 
 def devoir_accessible(devoir_id):
@@ -912,7 +928,8 @@ def nom_stockage_unique(nom_original):
 def rendre_copie():
     devoir_id = request.form.get('devoir_id', type=int)
     if devoir_id is None:
-        return 'Devoir invalide.', 400
+        flash("Impossible d'envoyer la copie : devoir invalide.", 'error')
+        return redirect(url_for('dashboard_eleve'))
     devoir = devoir_accessible(devoir_id)
     examen = get_db().execute(
         'SELECT * FROM sessions_examen WHERE eleve_id = ? AND devoir_id = ?',
@@ -922,13 +939,16 @@ def rendre_copie():
         return 'Session invalide.', 403
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
     if utc_now() >= fin:
-        return 'Le temps est ecoule.', 403
+        flash("Le temps est écoulé. La copie n'a pas été envoyée.", 'warning')
+        return redirect(url_for('dashboard_eleve'))
     copie = request.files.get('copie')
     if copie is None or not copie.filename:
-        return 'Aucun fichier selectionne.', 400
+        flash("Impossible d'envoyer la copie : aucun fichier sélectionné.", 'error')
+        return redirect(url_for('voir_devoir', devoir_id=devoir_id))
     nom_fichier = nom_stockage_unique(copie.filename)
     if nom_fichier is None:
-        return 'Format non autorise. Utilisez un PDF, JPG ou PNG.', 400
+        flash('Format non autorisé. Utilisez un PDF, DOCX, JPG ou PNG.', 'error')
+        return redirect(url_for('voir_devoir', devoir_id=devoir_id))
 
     dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'copies', str(devoir_id))
     os.makedirs(dossier, exist_ok=True)
@@ -938,13 +958,8 @@ def rendre_copie():
         (nom_fichier, utc_now().isoformat(timespec='seconds'), examen['id']),
     )
     get_db().commit()
-    return redirect(url_for('copie_deposee'))
-
-
-@app.get('/copie-deposee')
-@login_required
-def copie_deposee():
-    return 'Votre copie a bien ete deposee.'
+    flash('Copie envoyée avec succès.', 'success')
+    return redirect(url_for('voir_devoir', devoir_id=devoir_id))
 
 
 @app.get('/uploads/<path:nom_fichier>')

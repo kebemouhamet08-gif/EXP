@@ -2,16 +2,60 @@
   const sidebar = document.querySelector('[data-sidebar]');
   const backdrop = document.querySelector('[data-sidebar-backdrop]');
   const menuToggle = document.querySelector('[data-menu-toggle]');
-  const toast = document.querySelector('[data-toast]');
+  const toastContainer = document.querySelector('[data-toast-container]');
+  const toastIcons = { success: '✓', error: '✕', warning: '!', info: 'i' };
 
-  let toastTimeout;
-  const showToast = (message) => {
-    if (!toast) return;
-    window.clearTimeout(toastTimeout);
-    toast.textContent = message;
-    toast.classList.add('is-visible');
-    toastTimeout = window.setTimeout(() => toast.classList.remove('is-visible'), 1600);
+  const dismissToast = (toast) => {
+    if (!toast || toast.classList.contains('is-leaving')) return;
+    window.clearTimeout(toast._dismissTimeout);
+    toast.classList.add('is-leaving');
+    toast.classList.remove('is-visible');
+    window.setTimeout(() => toast.remove(), 220);
   };
+
+  const armToast = (toast) => {
+    const category = toast.dataset.category || 'info';
+    const delay = category === 'warning' ? 6000 : 4500;
+    const schedule = () => {
+      window.clearTimeout(toast._dismissTimeout);
+      toast._dismissTimeout = window.setTimeout(() => dismissToast(toast), delay);
+    };
+    toast.querySelector('[data-toast-close]')?.addEventListener('click', () => dismissToast(toast));
+    toast.addEventListener('mouseenter', () => window.clearTimeout(toast._dismissTimeout));
+    toast.addEventListener('mouseleave', schedule);
+    toast.addEventListener('focusin', () => window.clearTimeout(toast._dismissTimeout));
+    toast.addEventListener('focusout', schedule);
+    window.requestAnimationFrame(() => toast.classList.add('is-visible'));
+    schedule();
+  };
+
+  const showToast = (message, category = 'info') => {
+    if (!toastContainer) return;
+    const safeCategory = Object.prototype.hasOwnProperty.call(toastIcons, category) ? category : 'info';
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${safeCategory}`;
+    toast.dataset.toast = '';
+    toast.dataset.category = safeCategory;
+    toast.setAttribute('role', safeCategory === 'error' ? 'alert' : 'status');
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = toastIcons[safeCategory];
+    const copy = document.createElement('p');
+    copy.textContent = message;
+    const close = document.createElement('button');
+    close.className = 'toast-close';
+    close.type = 'button';
+    close.dataset.toastClose = '';
+    close.setAttribute('aria-label', 'Fermer la notification');
+    close.textContent = '×';
+    toast.append(icon, copy, close);
+    toastContainer.appendChild(toast);
+    armToast(toast);
+  };
+
+  document.querySelectorAll('[data-toast]').forEach(armToast);
+  window.ClasseXPToast = showToast;
 
   const setMenuState = (open) => {
     sidebar?.classList.toggle('is-open', open);
@@ -58,9 +102,9 @@
           document.execCommand('copy');
           helper.remove();
         }
-        showToast('Code copié');
+        showToast('Code copié', 'success');
       } catch {
-        showToast(`Code : ${value}`);
+        showToast(`Code : ${value}`, 'info');
       }
     });
   });
@@ -124,12 +168,14 @@
 
   const exam = document.querySelector('[data-exam]');
   if (exam) {
+    const completed = exam.dataset.completed === 'true';
     const timer = exam.querySelector('[data-countdown]');
     const timerCard = exam.querySelector('[data-timer-card]');
     const status = exam.querySelector('[data-timer-status]');
     const initialRemaining = Math.max(0, Number(exam.dataset.remaining || 0));
     const deadline = Date.now() + (initialRemaining * 1000);
     const submitButton = exam.querySelector('[data-submit-button]');
+    let deadlineWarningShown = false;
 
     const tick = () => {
       const safeRemaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
@@ -137,9 +183,15 @@
       const minutes = String(Math.floor((safeRemaining % 3600) / 60)).padStart(2, '0');
       const seconds = String(safeRemaining % 60).padStart(2, '0');
       if (timer) timer.textContent = `${hours}:${minutes}:${seconds}`;
-      timerCard?.classList.toggle('is-warning', safeRemaining <= 600 && safeRemaining > 300);
-      timerCard?.classList.toggle('is-danger', safeRemaining <= 300);
-      if (status) status.textContent = safeRemaining ? 'L’épreuve est en cours' : 'Le temps est écoulé';
+      if (!completed) {
+        timerCard?.classList.toggle('is-warning', safeRemaining <= 600 && safeRemaining > 300);
+        timerCard?.classList.toggle('is-danger', safeRemaining <= 300);
+        if (status) status.textContent = safeRemaining ? 'L’épreuve est en cours' : 'Le temps est écoulé';
+        if (!deadlineWarningShown && safeRemaining > 0 && safeRemaining <= 300) {
+          showToast('Il vous reste moins de 5 minutes pour envoyer votre copie.', 'warning');
+          deadlineWarningShown = true;
+        }
+      }
       if (submitButton) submitButton.disabled = safeRemaining === 0;
       if (safeRemaining > 0) {
         window.setTimeout(tick, 1000);

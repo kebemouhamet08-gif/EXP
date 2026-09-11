@@ -219,10 +219,10 @@ def nouvelle_classe():
 @app.post('/eleve/classe/rejoindre')
 @role_requis('ELEVE')
 def rejoindre_classe():
-    code = request.form.get('code', '').strip().upper()
+    code = ''.join(char for char in request.form.get('code', '').upper() if char.isalnum())
     classe = get_db().execute('SELECT id FROM classes WHERE code = ?', (code,)).fetchone()
     if classe is None:
-        return 'Code de classe invalide.', 404
+        return 'Code de classe invalide. Vérifiez le code transmis par le professeur.', 404
     db = get_db()
     db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], session['utilisateur_id']))
     db.commit()

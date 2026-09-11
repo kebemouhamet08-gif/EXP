@@ -30,7 +30,7 @@
     {% else %}
     <section>
         <h2>Rejoindre une classe</h2>
-        <form method="post" action="{{ url_for('rejoindre_classe') }}"><input name="code" placeholder="Code d'invitation" required><button type="submit">Rejoindre</button></form>
+        <form method="post" action="{{ url_for('rejoindre_classe') }}"><input name="code" placeholder="Code d'invitation" maxlength="10" autocomplete="off" required><button type="submit">Rejoindre</button></form>
     </section>
     <section>
         <h2>Mes classes</h2>

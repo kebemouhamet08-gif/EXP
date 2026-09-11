@@ -156,8 +156,10 @@ def test_student_join_class_and_duplicate_is_idempotent(professor, student, app)
 
 
 def test_student_rejects_unknown_class_code(student):
-    response = student["client"].post("/eleve/classe/rejoindre", data={"code": "UNKNOWN"})
-    assert response.status_code == 404
+    response = student["client"].post(
+        "/eleve/classe/rejoindre", data={"code": "UNKNOWN"}, follow_redirects=True,
+    )
+    assert response.status_code == 200
     assert b"Code de classe invalide" in response.data
 
 
@@ -184,8 +186,13 @@ def test_student_assignment_lifecycle_and_expiration(professor, student, app):
     with app.app_context():
         application_module.get_db().execute("UPDATE sessions_examen SET heure_debut = ?", ((utc_now() - timedelta(minutes=2)).isoformat(),))
         application_module.get_db().commit()
-    response = client.post("/rendre_copie", data={"devoir_id": str(assignment_id), "copie": (pytest.importorskip("io").BytesIO(b"x"), "copy.pdf")}, content_type="multipart/form-data")
-    assert response.status_code == 403
+    response = client.post(
+        "/rendre_copie",
+        data={"devoir_id": str(assignment_id), "copie": (pytest.importorskip("io").BytesIO(b"x"), "copy.pdf")},
+        content_type="multipart/form-data", follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"Le temps est" in response.data
 
 
 def test_student_submission_and_teacher_copies(professor, student, app, file_factory):
@@ -199,18 +206,33 @@ def test_student_submission_and_teacher_copies(professor, student, app, file_fac
         "/rendre_copie",
         data={"devoir_id": str(assignment_id), **file_factory("../../copie.pdf", b"copie")},
         content_type="multipart/form-data",
+        follow_redirects=True,
     )
-    assert response.status_code == 302
+    assert response.status_code == 200
+    assert b"Copie envoy" in response.data
+    assert b"Copie remise" in response.data
+    assert b"Remplacer ma copie" in response.data
+    assert b"/copie-deposee" not in response.data
     with app.app_context():
-        stored_copy = application_module.get_db().execute(
-            "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
-        ).fetchone()["fichier_copie"]
+        stored = application_module.get_db().execute(
+            "SELECT id, fichier_copie, heure_fin, statut FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
+        ).fetchone()
+        stored_copy = stored["fichier_copie"]
+        session_id = stored["id"]
+    assert stored["statut"] == "TERMINE"
+    assert stored["heure_fin"] is not None
     assert stored_copy.endswith(".pdf")
     assert len(stored_copy) == 36
     assert Path(app.config["UPLOAD_FOLDER"], "copies", str(assignment_id), stored_copy).exists()
     copies = professor["client"].get(f"/professeur/devoir/{assignment_id}/copies")
     assert copies.status_code == 200 and b"Remise" in copies.data
     assert b".." not in copies.data
+    grade = professor["client"].post(
+        f"/professeur/session/{session_id}/noter",
+        data={"note": "16", "commentaire": "Bon travail"}, follow_redirects=True,
+    )
+    assert grade.status_code == 200
+    assert b"Note et correction enregistr" in grade.data
 
 
 def test_repeated_copy_names_receive_distinct_storage_names(professor, student, app, file_factory):
@@ -269,6 +291,9 @@ def test_ui_shell_and_static_assets(client):
     try:
         assert css.mimetype == "text/css"
         assert javascript.mimetype == "text/javascript"
+        assert b"toast--success" in css.data
+        assert b"data-toast-close" in javascript.data
+        assert b"moins de 5 minutes" in javascript.data
     finally:
         css.close()
         javascript.close()
@@ -277,6 +302,28 @@ def test_ui_shell_and_static_assets(client):
     assert b'name="role" value="ELEVE"' in registration.data
     assert b'name="role" value="PROFESSEUR"' in registration.data
     assert b"data-password-toggle" in registration.data
+    assert b"data-toast-container" in registration.data
+
+
+def test_professor_creation_actions_use_success_toasts(professor, app):
+    client = professor["client"]
+    created_class = client.post(
+        "/professeur/classe/nouvelle", data={"nom": "Classe Toast"}, follow_redirects=True,
+    )
+    assert created_class.status_code == 200
+    assert b"Classe cr" in created_class.data and b"toast--success" in created_class.data
+    with app.app_context():
+        class_id = application_module.get_db().execute(
+            "SELECT id FROM classes WHERE nom = 'Classe Toast'"
+        ).fetchone()["id"]
+    created_assignment = create_assignment(client, class_id, title="Devoir Toast")
+    assert created_assignment.status_code == 302
+    dashboard = client.get(created_assignment.location)
+    assert b"Devoir cr" in dashboard.data and b"toast--success" in dashboard.data
+
+
+def test_confirmation_route_was_removed(client):
+    assert client.get("/copie-deposee").status_code == 404
 
 
 def test_uploaded_files_are_limited_to_authorized_users(professor, student, app, file_factory):

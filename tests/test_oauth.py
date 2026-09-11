@@ -74,8 +74,17 @@ def test_external_email_collision_is_never_automatically_linked(client, app, mon
         "_csrf_token": token, "mot_de_passe": "motdepasse123", "confirm_link": "1",
     })
     assert linked.status_code == 302 and "/mon-compte" in linked.location
+    account = client.get(linked.location)
+    assert b"Google a" in account.data and b"toast--success" in account.data
     with app.app_context():
         assert application_module.get_db().execute("SELECT COUNT(*) FROM identites_externes").fetchone()[0] == 1
+
+    token = csrf_from(client, "/mon-compte")
+    unlinked = client.post(
+        "/mon-compte/delier/google", data={"_csrf_token": token}, follow_redirects=True,
+    )
+    assert unlinked.status_code == 200
+    assert b"Google a" in unlinked.data and b"toast--success" in unlinked.data
 
 
 def test_google_to_local_switch_replaces_current_user(client, monkeypatch):

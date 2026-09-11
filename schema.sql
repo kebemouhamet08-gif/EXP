@@ -3,14 +3,29 @@ DROP TABLE IF EXISTS sessions_examen;
 DROP TABLE IF EXISTS devoirs;
 DROP TABLE IF EXISTS classe_eleves;
 DROP TABLE IF EXISTS classes;
+DROP TABLE IF EXISTS identites_externes;
 DROP TABLE IF EXISTS utilisateurs;
 
 CREATE TABLE utilisateurs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    mot_de_passe_hash TEXT NOT NULL,
-    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR')) NOT NULL
+    mot_de_passe_hash TEXT,
+    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR')) NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE identites_externes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    utilisateur_id INTEGER NOT NULL,
+    provider TEXT NOT NULL CHECK(provider IN ('google', 'facebook', 'apple', 'microsoft')),
+    provider_subject TEXT NOT NULL,
+    email_provider TEXT,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (utilisateur_id) REFERENCES utilisateurs(id) ON DELETE CASCADE,
+    UNIQUE (provider, provider_subject)
 );
 
 CREATE TABLE classes (

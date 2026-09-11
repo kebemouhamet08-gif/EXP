@@ -28,6 +28,7 @@
         <span class="notification" aria-label="Notifications, bientôt disponible">{{ icon('bell') }}<i aria-hidden="true"></i></span>
         <span class="avatar" aria-hidden="true">{{ nav_utilisateur['nom'][0]|upper }}</span>
         <span class="account-copy"><strong>{{ nav_utilisateur['nom'] }}</strong><small>{{ 'Professeur' if active_role == 'PROFESSEUR' else 'Élève' }}</small></span>
+        <a class="account-text-link" href="{{ url_for('changer_compte') }}">Changer de compte</a>
         <a class="logout-link" href="{{ url_for('deconnexion') }}" aria-label="Se déconnecter">{{ icon('logout') }}</a>
       </div>
     {% else %}
@@ -60,7 +61,8 @@
             <span class="sidebar-item sidebar-item--disabled">{{ icon('folder') }}<span>Fichiers<small>Bientôt</small></span></span>
           {% endif %}
           <span class="sidebar-separator" aria-hidden="true"></span>
-          <span class="sidebar-item sidebar-item--disabled">{{ icon('settings') }}<span>Paramètres<small>Bientôt</small></span></span>
+          <a class="sidebar-item {{ 'sidebar-item--active' if request.endpoint == 'mon_compte' }}" href="{{ url_for('mon_compte') }}">{{ icon('settings') }}<span>Mon compte</span></a>
+          <a class="sidebar-item" href="{{ url_for('changer_compte') }}">{{ icon('logout') }}<span>Changer de compte</span></a>
         </nav>
         <div class="sidebar-card">
           <span class="sidebar-card-cap">{{ logo() }}</span>

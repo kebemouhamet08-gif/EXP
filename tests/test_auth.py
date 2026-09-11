@@ -4,11 +4,11 @@ import app as application_module
 from werkzeug.security import check_password_hash
 
 
-def register(client, *, role="ELEVE", email=None, password="motdepasse123"):
+def register(client, *, role="ELEVE", email=None, password="motdepasse123", name="Utilisateur Test"):
     email = email or f"user-{uuid.uuid4().hex}@example.com"
     return email, client.post(
         "/inscription",
-        data={"nom": "Utilisateur Test", "email": email, "mot_de_passe": password, "role": role},
+        data={"nom": name, "email": email, "mot_de_passe": password, "role": role},
     )
 
 
@@ -143,3 +143,40 @@ def test_role_redirects_prevent_cross_dashboard_access(client):
     login(client, teacher_email)
     assert client.get("/professeur").status_code == 200
     assert client.get("/eleve").status_code == 302
+
+
+def test_kolemm14_remember_switches_to_another_account_and_restores_only_new_user(client, app):
+    email_a, _ = register(client, email="kolemm14@example.com", name="Kolemm14")
+    email_b, _ = register(client, email="utilisateur-b@example.com", name="Utilisateur B")
+    assert login(client, email_a, remember=True).status_code == 302
+    assert b"Kolemm14" in client.get("/eleve").data
+
+    switch = client.get("/changer-compte")
+    assert switch.status_code == 302 and "switch=1" in switch.location
+    assert client.get_cookie("remember_token") is None
+
+    assert login(client, email_b, remember=True).status_code == 302
+    dashboard = client.get("/eleve")
+    assert b"Utilisateur B" in dashboard.data
+    assert b"Kolemm14" not in dashboard.data
+    remember_b = client.get_cookie("remember_token")
+    assert remember_b is not None
+
+    reopened = app.test_client()
+    reopened.set_cookie("remember_token", remember_b.value)
+    restored = reopened.get("/eleve")
+    assert b"Utilisateur B" in restored.data
+    assert b"Kolemm14" not in restored.data
+
+
+def test_post_login_replaces_authenticated_user_and_a_to_b_to_c_then_logout(client):
+    accounts = [(register(client, email=f"switch-{letter}@example.com", name=f"Compte {letter.upper()}")[0], f"Compte {letter.upper()}") for letter in "abc"]
+    for email, name in accounts:
+        assert login(client, email, remember=True).status_code == 302
+        page = client.get("/eleve")
+        assert name.encode() in page.data
+        assert all(other_name.encode() not in page.data for _, other_name in accounts if other_name != name)
+    assert client.get("/deconnexion").status_code == 302
+    assert client.get_cookie("remember_token") is None
+    with client.session_transaction() as flask_session:
+        assert not flask_session

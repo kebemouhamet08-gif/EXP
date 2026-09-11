@@ -19,4 +19,4 @@ jobs:
       - name: Compile Python files
         run: python -m compileall .
       - name: Run tests with coverage
-        run: pytest -vv --cov=app --cov-report=term-missing --cov-report=xml
+        run: python -m pytest -W error -vv --cov=app --cov-report=term-missing --cov-report=xml

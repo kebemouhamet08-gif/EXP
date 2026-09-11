@@ -1,44 +1,31 @@
 # ClasseXP
 
-ClasseXP est une application scolaire Flask en cours de construction. Le socle actuel fournit une fabrique d’application, SQLite, une interface HTML/CSS/JavaScript, une authentification locale par session et des permissions `STUDENT` / `TEACHER`.
+Plateforme Flask de devoirs chronometres, en construction progressive.
 
-## Installation
+## Lancer le projet
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+Depuis `/workspaces/EXP` :
+
+```bash
+python -m pip install -r ../requirements.txt
+python -m flask --app app init-db
+python app.py
 ```
 
-Définir ensuite `CLASSEXP_SECRET_KEY` avec une valeur longue et aléatoire. Les variables attendues sont répertoriées dans `.env.example` ; ce fichier n’est pas chargé automatiquement.
+Ouvrir ensuite `http://127.0.0.1:5000`.
 
-```powershell
-flask --app app init-db
-flask --app app run --debug
-```
+## Phase actuelle
 
-L’application est alors disponible sur `http://127.0.0.1:5000`.
+- inscription eleve ou professeur ;
+- connexion et deconnexion ;
+- mots de passe hashes ;
+- tableaux de bord proteges par role ;
+- classes avec code d’invitation ;
+- création de devoirs avec sujet, ouverture et durée ;
+- chrono calculé côté serveur ;
+- dépôt de copies PDF, DOCX, JPG et PNG ;
+- consultation des copies et notation professeur ;
+- affichage des notes côté élève ;
+- base SQLite pour les classes, devoirs et sessions d’examen.
 
-## Tests
-
-```powershell
-python -m pytest -q tests
-```
-
-Le bac à sable utilisé pendant le développement exigeait de désactiver les plugins temporaires de pytest :
-
-```powershell
-python -m pytest -q tests -p no:tmpdir -p no:cacheprovider
-```
-
-## Organisation
-
-- `app.py` : point d’entrée WSGI et développement ;
-- `classexp/` : fabrique Flask, base, authentification et routes ;
-- `templates/` : vues HTML légères ;
-- `static/` : CSS et JavaScript vanilla ;
-- `schema.sql` : schéma SQLite initial idempotent ;
-- `tests/` : tests d’intégration Flask/SQLite ;
-- `docs/` : audits et rapports de phase.
-
-Les fichiers de base, secrets, environnements et futurs uploads sont exclus de Git.
+La commande `init-db` reinitialise la base et efface les donnees existantes.

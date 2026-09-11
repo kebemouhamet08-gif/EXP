@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ClasseXP - Formulaire</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; }
+        main { width: min(92vw, 600px); margin: 3rem auto; background: #313244; padding: 2rem; border-radius: 12px; }
+        label { display: block; margin-top: 1rem; } input, select, textarea, button { box-sizing: border-box; width: 100%; padding: .7rem; margin-top: .35rem; border-radius: 6px; border: 1px solid #585b70; }
+        button { background: #a6e3a1; border: 0; margin-top: 1.5rem; font-weight: bold; cursor: pointer; } a { color: #89b4fa; } .error { color: #f38ba8; }
+    </style>
+</head>
+<body><main>
+    <p><a href="{{ url_for('dashboard_professeur') }}">Retour au tableau de bord</a></p>
+    {% if type_formulaire == 'classe' %}
+    <h1>Créer une classe</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post"><label>Nom de la classe<input name="nom" required></label><button type="submit">Créer la classe</button></form>
+    {% else %}
+    <h1>Créer un devoir</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" enctype="multipart/form-data">
+        <label>Titre<input name="titre" required></label><label>Description<textarea name="description" rows="4"></textarea></label>
+        <label>Classe<select name="classe_id" required>{% for classe in classes %}<option value="{{ classe['id'] }}">{{ classe['nom'] }}</option>{% endfor %}</select></label>
+        <label>Ouverture<input type="datetime-local" name="date_ouverture" required></label>
+        <label>Durée en secondes<input type="number" name="duree" min="60" value="10800" required></label>
+        <label>Sujet<input type="file" name="sujet" accept=".pdf,.docx,.jpg,.png" required></label><button type="submit">Publier le devoir</button>
+    </form>
+    {% endif %}
+</main></body>
+</html>

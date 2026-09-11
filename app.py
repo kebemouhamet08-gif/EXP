@@ -1,27 +1,35 @@
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Flask, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__, static_folder=None)
+app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('CLASSEXP_SECRET_KEY', 'dev-secret-change-me')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
+app.config['DATABASE'] = os.path.join(app.root_path, 'database', 'classexp.db')
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'png', 'docx'}
-DATABASE = os.path.join(app.root_path, 'database', 'classexp.db')
+
+
+def utc_now():
+    """Return naive UTC to stay compatible with existing SQLite values."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
-        os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
-        db = g._database = sqlite3.connect(DATABASE)
+        database_path = current_app.config['DATABASE']
+        os.makedirs(os.path.dirname(database_path), exist_ok=True)
+        db = g._database = sqlite3.connect(database_path)
         db.row_factory = sqlite3.Row
+        db.execute('PRAGMA foreign_keys = ON')
     return db
 
 
@@ -55,6 +63,18 @@ def ensure_db_initialized():
 ensure_db_initialized()
 
 
+@app.context_processor
+def inject_navigation_context():
+    """Expose the signed-in user to the shared application shell."""
+    utilisateur_id = session.get('utilisateur_id')
+    if utilisateur_id is None:
+        return {}
+    utilisateur = get_db().execute(
+        'SELECT nom, email, role FROM utilisateurs WHERE id = ?', (utilisateur_id,)
+    ).fetchone()
+    return {'nav_utilisateur': utilisateur, 'nav_role': session.get('role')}
+
+
 @app.cli.command('init-db')
 def init_db_command():
     """Efface les donnees existantes et cree les tables."""
@@ -64,7 +84,7 @@ def init_db_command():
 
 @app.route('/')
 def accueil():
-    return send_from_directory(app.root_path, 'index.html')
+    return render_template('home.html')
 
 
 @app.route('/inscription', methods=['GET', 'POST'])
@@ -161,6 +181,7 @@ def dashboard_eleve():
     ).fetchone()
     devoirs = get_db().execute(
           '''SELECT d.*, c.nom AS classe_nom, s.note, s.commentaire,
+                        s.statut, s.heure_debut, s.heure_fin, s.fichier_copie,
                         EXISTS(SELECT 1 FROM sessions_examen sx WHERE sx.devoir_id = d.id AND sx.eleve_id = ?) AS commence
            FROM devoirs d
            JOIN classes c ON c.id = d.classe_id
@@ -174,7 +195,13 @@ def dashboard_eleve():
         'SELECT c.nom, c.code FROM classes c JOIN classe_eleves ce ON ce.classe_id = c.id WHERE ce.eleve_id = ?',
         (session['utilisateur_id'],),
     ).fetchall()
-    return render_template('dashboard.html', utilisateur=utilisateur, role='ELEVE', devoirs=devoirs, classes=classes)
+    devoirs_en_cours = sum(1 for devoir in devoirs if devoir['statut'] == 'EN_COURS')
+    notes = [devoir['note'] for devoir in devoirs if devoir['note'] is not None]
+    moyenne = round(sum(notes) / len(notes), 1) if notes else None
+    return render_template(
+        'dashboard.html', utilisateur=utilisateur, role='ELEVE', devoirs=devoirs,
+        classes=classes, devoirs_en_cours=devoirs_en_cours, moyenne=moyenne,
+    )
 
 
 @app.get('/professeur')
@@ -192,13 +219,17 @@ def dashboard_professeur():
     ).fetchall()
     devoirs = db.execute(
         '''SELECT d.*, c.nom AS classe_nom,
-                  COUNT(s.id) AS copies
+                  COUNT(CASE WHEN s.fichier_copie IS NOT NULL THEN 1 END) AS copies,
+                  COUNT(CASE WHEN s.fichier_copie IS NOT NULL AND s.note IS NULL THEN 1 END) AS a_corriger
            FROM devoirs d JOIN classes c ON c.id = d.classe_id
            LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.fichier_copie IS NOT NULL
            WHERE d.professeur_id = ? GROUP BY d.id ORDER BY d.date_ouverture DESC''',
         (session['utilisateur_id'],),
     ).fetchall()
-    return render_template('dashboard.html', utilisateur=utilisateur, role='PROFESSEUR', classes=classes, devoirs=devoirs)
+    return render_template(
+        'dashboard.html', utilisateur=utilisateur, role='PROFESSEUR',
+        classes=classes, devoirs=devoirs,
+    )
 
 
 @app.route('/professeur/classe/nouvelle', methods=['GET', 'POST'])
@@ -240,14 +271,14 @@ def nouveau_devoir():
         duree = request.form.get('duree', type=int)
         ouverture = request.form.get('date_ouverture', '').strip()
         sujet = request.files.get('sujet')
+        nom_sujet = nom_stockage_unique(sujet.filename) if sujet is not None else None
         classe = db.execute('SELECT id FROM classes WHERE id = ? AND professeur_id = ?', (classe_id, session['utilisateur_id'])).fetchone()
-        if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or not extension_autorisee(sujet.filename):
+        if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or nom_sujet is None:
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Tous les champs sont obligatoires. La duree minimale est de 60 secondes.')
         try:
             datetime.fromisoformat(ouverture)
         except ValueError:
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Date d’ouverture invalide.')
-        nom_sujet = secure_filename(sujet.filename)
         dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'sujets')
         os.makedirs(dossier, exist_ok=True)
         sujet.save(os.path.join(dossier, nom_sujet))
@@ -318,7 +349,7 @@ def commencer_devoir(devoir_id):
     devoir = devoir_accessible(devoir_id)
     if devoir is None:
         return 'Devoir introuvable.', 404
-    maintenant = datetime.utcnow()
+    maintenant = utc_now()
     ouverture = datetime.fromisoformat(devoir['date_ouverture'])
     if maintenant < ouverture:
         return 'Ce devoir n’est pas encore ouvert.', 403
@@ -344,12 +375,21 @@ def voir_devoir(devoir_id):
     if examen is None:
         return redirect(url_for('dashboard_eleve'))
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
-    restant = max(0, int((fin - datetime.utcnow()).total_seconds()))
+    restant = max(0, int((fin - utc_now()).total_seconds()))
     return render_template('devoir.html', devoir=devoir, restant=restant, examen=examen)
 
 
 def extension_autorisee(nom_fichier):
     return '.' in nom_fichier and nom_fichier.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def nom_stockage_unique(nom_original):
+    """Build an opaque storage name from a sanitized, allowed extension."""
+    nom_securise = secure_filename(nom_original)
+    if not extension_autorisee(nom_securise):
+        return None
+    extension = nom_securise.rsplit('.', 1)[1].lower()
+    return f'{uuid.uuid4().hex}.{extension}'
 
 
 @app.post('/rendre_copie')
@@ -366,21 +406,21 @@ def rendre_copie():
     if devoir is None or examen is None:
         return 'Session invalide.', 403
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
-    if datetime.utcnow() >= fin:
+    if utc_now() >= fin:
         return 'Le temps est ecoule.', 403
     copie = request.files.get('copie')
     if copie is None or not copie.filename:
         return 'Aucun fichier selectionne.', 400
-    if not extension_autorisee(copie.filename):
+    nom_fichier = nom_stockage_unique(copie.filename)
+    if nom_fichier is None:
         return 'Format non autorise. Utilisez un PDF, JPG ou PNG.', 400
 
     dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'copies', str(devoir_id))
     os.makedirs(dossier, exist_ok=True)
-    nom_fichier = secure_filename(f"{session['utilisateur_id']}_{copie.filename}")
     copie.save(os.path.join(dossier, nom_fichier))
     get_db().execute(
         "UPDATE sessions_examen SET fichier_copie = ?, heure_fin = ?, statut = 'TERMINE' WHERE id = ?",
-        (nom_fichier, datetime.utcnow().isoformat(timespec='seconds'), examen['id']),
+        (nom_fichier, utc_now().isoformat(timespec='seconds'), examen['id']),
     )
     get_db().commit()
     return redirect(url_for('copie_deposee'))
@@ -392,7 +432,41 @@ def copie_deposee():
 
 
 @app.get('/uploads/<path:nom_fichier>')
+@connexion_requise
 def telecharger_fichier(nom_fichier):
+    parties = nom_fichier.replace('\\', '/').split('/')
+    if len(parties) == 2 and parties[0] == 'sujets':
+        if session.get('role') == 'PROFESSEUR':
+            autorise = get_db().execute(
+                'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
+                (parties[1], session['utilisateur_id']),
+            ).fetchone() is not None
+        else:
+            autorise = get_db().execute(
+                '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
+                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
+                (parties[1], session['utilisateur_id']),
+            ).fetchone() is not None
+    elif len(parties) == 3 and parties[0] == 'copies' and parties[1].isdigit():
+        copie = get_db().execute(
+            '''SELECT s.eleve_id, d.professeur_id FROM sessions_examen s
+               JOIN devoirs d ON d.id = s.devoir_id
+               WHERE s.devoir_id = ? AND s.fichier_copie = ?''',
+            (int(parties[1]), parties[2]),
+        ).fetchone()
+        if copie is None:
+            abort(404)
+        autorise = (
+            session.get('role') == 'PROFESSEUR'
+            and copie['professeur_id'] == session['utilisateur_id']
+        ) or (
+            session.get('role') == 'ELEVE'
+            and copie['eleve_id'] == session['utilisateur_id']
+        )
+    else:
+        abort(404)
+    if not autorise:
+        abort(403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], nom_fichier)
 
 

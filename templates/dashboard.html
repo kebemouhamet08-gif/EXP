@@ -1,48 +1,99 @@
-<!doctype html>
-<html lang="fr">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ClasseXP - Tableau de bord</title>
-    <style>
-        body { font-family: system-ui, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; }
-        main { width: min(94vw, 1000px); margin: 2rem auto; } header { display: flex; justify-content: space-between; align-items: center; }
-        a { color: #89b4fa; } section { background: #313244; padding: 1.5rem; border-radius: 12px; margin-top: 1.5rem; }
-        input, select, button { padding: .65rem; border-radius: 6px; border: 1px solid #585b70; } button { background: #a6e3a1; border: 0; font-weight: bold; cursor: pointer; }
-        li { margin: .75rem 0; } .muted { color: #a6adc8; }
-    </style>
-</head>
-<body>
-<main>
-    <header><h1>ClasseXP</h1><a href="{{ url_for('deconnexion') }}">Se deconnecter</a></header>
-    <p>Bonjour {{ utilisateur['nom'] }}.</p>
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Tableau de bord · ClasseXP{% endblock %}
+{% block content %}
+{% if role == 'PROFESSEUR' %}
+  {% set total_copies = devoirs|sum(attribute='copies') %}
+  {% set total_a_corriger = devoirs|sum(attribute='a_corriger') %}
+  <header class="page-header dashboard-header">
+    <div>
+      <p class="eyebrow">Enseigner aujourd’hui, réussir demain</p>
+      <h1>Bonjour {{ utilisateur['nom'] }} <span aria-hidden="true">👋</span></h1>
+      <p>Voici un aperçu de vos classes et de l’activité récente.<br>Tout est réuni pour vous accompagner au quotidien.</p>
+    </div>
+    <time class="dashboard-date" data-current-date></time>
+  </header>
 
-    {% if role == 'PROFESSEUR' %}
-    <section>
-        <h2>Mes classes</h2>
-        <p><a href="{{ url_for('nouvelle_classe') }}">Créer une classe</a> · <a href="{{ url_for('nouveau_devoir') }}">Créer un devoir</a></p>
-        {% if classes %}<ul>{% for classe in classes %}<li><strong>{{ classe['nom'] }}</strong> · code <strong>{{ classe['code'] }}</strong> · {{ classe['nombre_eleves'] }} élève(s)</li>{% endfor %}</ul>{% else %}<p class="muted">Aucune classe créée.</p>{% endif %}
-    </section>
-    <section>
-        <h2>Mes devoirs</h2>
-        {% if devoirs %}<ul>{% for devoir in devoirs %}<li>{{ devoir['titre'] }} · {{ devoir['classe_nom'] }} · {{ devoir['copies'] }} copie(s) · <a href="{{ url_for('voir_copies', devoir_id=devoir['id']) }}">Voir les copies</a></li>{% endfor %}</ul>{% else %}<p class="muted">Aucun devoir créé.</p>{% endif %}
-    </section>
+  <section class="stat-grid" aria-label="Résumé de votre activité">
+    <article class="stat-card"><span class="stat-icon stat-blue">{{ icon('classes') }}</span><div><strong>{{ classes|length }}</strong><span>Classe{{ 's' if classes|length != 1 }}</span></div></article>
+    <article class="stat-card"><span class="stat-icon stat-violet">{{ icon('document') }}</span><div><strong>{{ devoirs|length }}</strong><span>Devoir{{ 's' if devoirs|length != 1 }} créé{{ 's' if devoirs|length != 1 }}</span></div></article>
+    <article class="stat-card"><span class="stat-icon stat-green">{{ icon('upload') }}</span><div><strong>{{ total_copies }}</strong><span>Copie{{ 's' if total_copies != 1 }} reçue{{ 's' if total_copies != 1 }}</span></div></article>
+    <article class="stat-card"><span class="stat-icon stat-orange">{{ icon('clock') }}</span><div><strong>{{ total_a_corriger }}</strong><span>À corriger</span></div></article>
+  </section>
+
+  <section class="dashboard-section" id="classes" aria-labelledby="classes-title">
+    <div class="section-header"><div><p class="eyebrow">Organisation</p><h2 id="classes-title">Mes classes</h2></div><a class="button button-primary button-compact" href="{{ url_for('nouvelle_classe') }}">{{ icon('plus') }} Créer une classe</a></div>
+    {% if classes %}
+      <div class="class-grid">{% for classe in classes %}
+        <article class="class-card card">
+          <div class="class-card-head"><span class="class-icon class-color-{{ loop.index0 % 4 }}">{{ icon('classes') }}</span><span class="class-menu" aria-hidden="true">•••</span></div>
+          <h3>{{ classe['nom'] }}</h3><p>{{ classe['nombre_eleves'] }} élève{{ 's' if classe['nombre_eleves'] != 1 }}</p>
+          <div class="class-code"><span><small>Code d’invitation</small><code>{{ classe['code'] }}</code></span><button type="button" data-copy="{{ classe['code'] }}" aria-label="Copier le code {{ classe['code'] }}">{{ icon('copy') }}</button></div>
+        </article>
+      {% endfor %}</div>
     {% else %}
-    <section>
-        <h2>Rejoindre une classe</h2>
-        <form method="post" action="{{ url_for('rejoindre_classe') }}"><input name="code" placeholder="Code d'invitation" maxlength="10" autocomplete="off" required><button type="submit">Rejoindre</button></form>
-    </section>
-    <section>
-        <h2>Mes classes</h2>
-        {% if classes %}<ul>{% for classe in classes %}<li>{{ classe['nom'] }} <span class="muted">({{ classe['code'] }})</span></li>{% endfor %}</ul>{% else %}<p class="muted">Rejoins une classe pour voir ses devoirs.</p>{% endif %}
-    </section>
-    <section>
-        <h2>Mes devoirs</h2>
-        {% if devoirs %}<ul>{% for devoir in devoirs %}<li><strong>{{ devoir['titre'] }}</strong> · {{ devoir['classe_nom'] }} · {{ devoir['duree'] // 60 }} min{% if devoir['note'] is not none %} · Note : {{ devoir['note'] }}/20{% endif %}
-            {% if devoir['commence'] %}<a href="{{ url_for('voir_devoir', devoir_id=devoir['id']) }}">Continuer</a>{% else %}<form method="post" action="{{ url_for('commencer_devoir', devoir_id=devoir['id']) }}" style="display:inline"><button type="submit">Commencer</button></form>{% endif %}
-        </li>{% endfor %}</ul>{% else %}<p class="muted">Aucun devoir disponible.</p>{% endif %}
-    </section>
+      <div class="panel empty-state"><span class="empty-icon">{{ icon('classes') }}</span><h3>Créez votre première classe</h3><p>Un code d’invitation sera généré automatiquement pour vos élèves.</p><a class="button button-secondary" href="{{ url_for('nouvelle_classe') }}">Créer une classe</a></div>
     {% endif %}
-</main>
-</body>
-</html>
+  </section>
+
+  <section class="dashboard-section" id="devoirs" aria-labelledby="assignments-title">
+    <div class="section-header"><div><p class="eyebrow">Suivi</p><h2 id="assignments-title">Mes devoirs</h2></div><a class="button button-primary button-compact" href="{{ url_for('nouveau_devoir') }}">{{ icon('plus') }} Créer un devoir</a></div>
+    {% if devoirs %}<div class="assignment-list">{% for devoir in devoirs %}
+      <article class="assignment-item card">
+        <span class="assignment-icon color-{{ loop.index0 % 4 }}">{{ icon('document') }}</span>
+        <div class="assignment-copy"><h3>{{ devoir['titre'] }}</h3><p>{{ devoir['description'] or 'Aucune description ajoutée.' }}</p></div>
+        <span class="class-pill">{{ devoir['classe_nom'] }}</span>
+        <div class="assignment-date">{{ icon('calendar') }}<span><small>Ouverture</small>{{ devoir['date_ouverture']|replace('T', ' · ') }}</span></div>
+        <span class="badge {{ 'badge-warning' if devoir['a_corriger'] else 'badge-success' }}">{{ devoir['a_corriger'] ~ ' à corriger' if devoir['a_corriger'] else 'Publié' }}</span>
+        <a class="row-action" href="{{ url_for('voir_copies', devoir_id=devoir['id']) }}" aria-label="Voir les copies de {{ devoir['titre'] }}">{{ icon('arrow') }}</a>
+      </article>
+    {% endfor %}</div>{% else %}
+      <div class="panel empty-state"><span class="empty-icon">{{ icon('document') }}</span><h3>Aucun devoir pour le moment</h3><p>Publiez un sujet dès que votre première classe est prête.</p><a class="button button-primary" href="{{ url_for('nouveau_devoir') }}">Créer un devoir</a></div>
+    {% endif %}
+  </section>
+
+{% else %}
+  <header class="page-header dashboard-header student-welcome">
+    <div><p class="eyebrow">Bonne journée !</p><h1>Bonjour <span class="gradient-text">{{ utilisateur['nom'] }}</span> !</h1><p>« Les petits efforts répétés chaque jour font les grandes réussites. »</p></div>
+    <time class="dashboard-date" data-current-date></time>
+  </header>
+
+  <section class="stat-grid" aria-label="Résumé de votre activité" id="notes">
+    <article class="stat-card"><span class="stat-icon stat-blue">{{ icon('classes') }}</span><div><strong>{{ classes|length }}</strong><span>Classe{{ 's' if classes|length != 1 }}</span><small>Vous en faites partie</small></div></article>
+    <article class="stat-card"><span class="stat-icon stat-violet">{{ icon('document') }}</span><div><strong>{{ devoirs|length }}</strong><span>Devoir{{ 's' if devoirs|length != 1 }} disponible{{ 's' if devoirs|length != 1 }}</span></div></article>
+    <article class="stat-card"><span class="stat-icon stat-green">{{ icon('clock') }}</span><div><strong>{{ devoirs_en_cours }}</strong><span>En cours</span></div></article>
+    <article class="stat-card"><span class="stat-icon stat-indigo">{{ icon('chart') }}</span><div><strong>{{ moyenne if moyenne is not none else '--' }}{% if moyenne is not none %}<small>/20</small>{% endif %}</strong><span>{{ 'Moyenne générale' if moyenne is not none else 'Pas encore de note' }}</span></div></article>
+  </section>
+
+  <div class="student-layout">
+    <section class="dashboard-section" id="devoirs" aria-labelledby="student-assignments-title">
+      <div class="section-header"><div><p class="eyebrow">À votre rythme</p><h2 id="student-assignments-title">Devoirs à venir</h2></div><span class="section-count">{{ devoirs|length }} devoir{{ 's' if devoirs|length != 1 }}</span></div>
+      {% if devoirs %}<div class="student-assignment-list">{% for devoir in devoirs %}
+        <article class="student-assignment-item card">
+          <span class="assignment-icon color-{{ loop.index0 % 4 }}">{{ icon('document') }}</span>
+          <div class="assignment-copy"><div class="assignment-tags"><span>{{ devoir['classe_nom'] }}</span><span>{{ 'Remis' if devoir['statut'] == 'TERMINE' else ('En cours' if devoir['statut'] == 'EN_COURS' else 'À faire') }}</span></div><h3>{{ devoir['titre'] }}</h3><p>{{ devoir['description'] or 'Consultez le sujet au démarrage du devoir.' }}</p></div>
+          <div class="assignment-date">{{ icon('calendar') }}<span><small>Ouverture</small>{{ devoir['date_ouverture']|replace('T', ' · ') }}</span></div>
+          <div class="assignment-duration">{{ icon('clock') }}<span><small>Durée</small>{{ devoir['duree'] // 60 }} min</span></div>
+          <div class="assignment-action">
+            {% if devoir['note'] is not none %}<span class="grade-value">{{ devoir['note']|round(2) }}<small>/20</small></span>
+            {% elif devoir['statut'] == 'TERMINE' %}<span class="badge badge-success">Copie remise</span>
+            {% elif devoir['commence'] %}<a class="button button-primary button-compact" href="{{ url_for('voir_devoir', devoir_id=devoir['id']) }}">Continuer {{ icon('arrow') }}</a>
+            {% else %}<form method="post" action="{{ url_for('commencer_devoir', devoir_id=devoir['id']) }}"><button class="button button-primary button-compact" type="submit">Commencer {{ icon('arrow') }}</button></form>{% endif %}
+          </div>
+          {% if devoir['commentaire'] %}<p class="teacher-feedback"><strong>Commentaire :</strong> {{ devoir['commentaire'] }}</p>{% endif %}
+        </article>
+      {% endfor %}</div>{% else %}<div class="panel empty-state"><span class="empty-icon">{{ icon('document') }}</span><h3>Aucun devoir disponible</h3><p>Rejoignez une classe ou revenez un peu plus tard.</p></div>{% endif %}
+    </section>
+
+    <aside class="student-aside">
+      <section class="panel join-panel"><span class="panel-icon stat-green">{{ icon('classes') }}</span><h2>Rejoindre une classe</h2><p>Vous avez un code d’invitation ? Rejoignez votre nouvelle classe en quelques secondes.</p><form method="post" action="{{ url_for('rejoindre_classe') }}"><label class="sr-only" for="code">Code d’invitation</label><input class="form-input code-input" id="code" name="code" placeholder="Entrez le code (ex. ABC123)" maxlength="10" autocomplete="off" required><button class="button button-primary button-block" type="submit">Rejoindre la classe</button></form></section>
+      <section class="progress-note"><span aria-hidden="true">🏆</span><div><h2>Vous progressez !</h2><p>Chaque devoir rendu est un pas de plus vers vos objectifs.</p></div></section>
+    </aside>
+  </div>
+
+  <section class="dashboard-section" id="mes-classes" aria-labelledby="student-classes-title">
+    <div class="section-header"><div><p class="eyebrow">Vos espaces</p><h2 id="student-classes-title">Mes classes</h2></div></div>
+    {% if classes %}<div class="student-class-grid">{% for classe in classes %}<article class="student-class-card card"><span class="class-icon class-color-{{ loop.index0 % 4 }}">{{ icon('classes') }}</span><div><h3>{{ classe['nom'] }}</h3><p>Code {{ classe['code'] }}</p></div></article>{% endfor %}</div>{% else %}<div class="panel empty-state"><p>Vos classes apparaîtront ici après avoir saisi un code d’invitation.</p></div>{% endif %}
+  </section>
+{% endif %}
+{% endblock %}

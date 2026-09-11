@@ -1,6 +1,7 @@
 -- Reinitialise les tables lors de la commande flask init-db.
 DROP TABLE IF EXISTS sessions_examen;
 DROP TABLE IF EXISTS devoirs;
+DROP TABLE IF EXISTS classe_eleves;
 DROP TABLE IF EXISTS classes;
 DROP TABLE IF EXISTS utilisateurs;
 
@@ -9,7 +10,7 @@ CREATE TABLE utilisateurs (
     nom TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     mot_de_passe_hash TEXT NOT NULL,
-    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR', 'ADMIN')) NOT NULL
+    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR')) NOT NULL
 );
 
 CREATE TABLE classes (

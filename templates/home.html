@@ -1,10 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Accueil · ClasseXP{% endblock %}
-{% block content %}
-<section class="hero">
-  <p class="eyebrow">Apprendre, progresser, réussir</p>
-  <h1>La classe continue, simplement.</h1>
-  <p>ClasseXP réunira les classes, les devoirs, les remises et la progression dans un espace clair.</p>
-  <a class="button" href="{{ url_for('pages.login') }}">Se connecter</a>
+{% from "_icons.html" import icon, logo %}
+{% block title %}ClasseXP · La classe continue, simplement{% endblock %}
+{% block public_content %}
+<section class="landing-hero" aria-labelledby="hero-title">
+  <div class="hero-orb hero-orb-one" aria-hidden="true"></div>
+  <div class="hero-orb hero-orb-two" aria-hidden="true"></div>
+  <div class="hero-copy">
+    <p class="eyebrow">Apprendre, progresser, réussir</p>
+    <h1 id="hero-title">La classe continue,<br><span class="gradient-text">simplement.</span></h1>
+    <p class="hero-lead">ClasseXP simplifie la gestion de vos classes, de vos devoirs et de leurs remises, tout en permettant de suivre la progression de chaque élève.</p>
+    <div class="hero-actions">
+      <a class="button button-primary button-large" href="{{ url_for('connexion') }}">Se connecter {{ icon('arrow') }}</a>
+      <a class="button button-secondary button-large" href="#fonctionnalites">Découvrir ClasseXP</a>
+    </div>
+    <div class="hero-benefits" id="a-propos" aria-label="Avantages de ClasseXP">
+      <span>{{ icon('classes') }}Pour les enseignants<br>et les élèves</span>
+      <span>{{ icon('document') }}Simple et sécurisé</span>
+      <span>{{ icon('chart') }}Une éducation<br>plus connectée</span>
+    </div>
+  </div>
+
+  <div class="hero-visual" aria-hidden="true">
+    <p class="handwritten-note">Des élèves plus autonomes,<br>une école plus sereine.</p>
+    <div class="dashboard-preview">
+      <aside class="preview-sidebar">
+        <span class="preview-brand">{{ logo() }}</span>
+        <i class="is-active">{{ icon('home') }}<b>Accueil</b></i>
+        <i>{{ icon('classes') }}<b>Classes</b></i>
+        <i>{{ icon('document') }}<b>Devoirs</b></i>
+        <i>{{ icon('upload') }}<b>Remises</b></i>
+        <i>{{ icon('chart') }}<b>Progression</b></i>
+      </aside>
+      <div class="preview-main">
+        <div class="preview-toolbar"><span></span><span></span><span></span><b>ClasseXP</b></div>
+        <h2>Bonjour ! <span>👋</span></h2>
+        <p>Une nouvelle journée pour apprendre et progresser.</p>
+        <div class="preview-stat-grid"><i><b>3</b><small>Classes</small></i><i><b>12</b><small>Devoirs</small></i><i><b>28</b><small>Remises</small></i><i><b>85%</b><small>Réussite</small></i></div>
+        <div class="preview-columns">
+          <section><strong>Mes classes</strong><div><i></i><span><b>3e A</b><small>28 élèves</small></span></div><div><i></i><span><b>4e B</b><small>25 élèves</small></span></div></section>
+          <section><strong>Devoirs récents</strong><div><i></i><span><b>Exercice sur les fractions</b><small>À corriger</small></span></div><div><i></i><span><b>Mon environnement</b><small>18/28 remis</small></span></div></section>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="landing-features" id="fonctionnalites" aria-labelledby="features-title">
+  <div class="sr-only"><h2 id="features-title">Fonctionnalités ClasseXP</h2></div>
+  <div class="feature-grid">
+    <article class="feature-card"><span class="feature-icon feature-blue">{{ icon('classes') }}</span><div><h3>Classes</h3><p>Organisez vos groupes, partagez un code et centralisez les informations.</p></div></article>
+    <article class="feature-card"><span class="feature-icon feature-violet">{{ icon('document') }}</span><div><h3>Devoirs</h3><p>Créez et planifiez des évaluations avec des consignes claires.</p></div></article>
+    <article class="feature-card"><span class="feature-icon feature-green">{{ icon('upload') }}</span><div><h3>Remises</h3><p>Recevez les copies des élèves et gardez une vision claire des statuts.</p></div></article>
+    <article class="feature-card"><span class="feature-icon feature-indigo">{{ icon('chart') }}</span><div><h3>Progression</h3><p>Suivez les notes publiées et accompagnez chaque élève.</p></div></article>
+  </div>
 </section>
 {% endblock %}

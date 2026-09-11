@@ -1,25 +1,13 @@
-<!doctype html>
-<html lang="fr">
-<head>
-    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ClasseXP - {{ devoir['titre'] }}</title>
-    <style>
-        body { font-family: system-ui, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; }
-        main { width: min(92vw, 650px); margin: 3rem auto; background: #313244; padding: 2rem; border-radius: 12px; }
-        #chrono { text-align: center; color: #f38ba8; font: bold 3rem monospace; margin: 2rem 0; } input, button { padding: .75rem; border-radius: 6px; } button { background: #a6e3a1; border: 0; font-weight: bold; cursor: pointer; } a { color: #89b4fa; }
-    </style>
-</head>
-<body><main>
-    <p><a href="{{ url_for('dashboard_eleve') }}">Retour au tableau de bord</a></p><h1>{{ devoir['titre'] }}</h1><p>{{ devoir['description'] }}</p>
-    <div id="chrono" aria-live="polite"></div>
-    <p><a href="{{ url_for('telecharger_fichier', nom_fichier='sujets/' ~ devoir['sujet_pdf']) }}" target="_blank">Consulter le sujet</a></p>
-    <form action="{{ url_for('rendre_copie') }}" method="post" enctype="multipart/form-data">
-        <input type="hidden" name="devoir_id" value="{{ devoir['id'] }}"><label>Déposer ma copie <input type="file" name="copie" accept=".pdf,.docx,.jpg,.png" required></label><button type="submit">Rendre le devoir</button>
-    </form>
-    <script>
-        let restant = {{ restant }}; const chrono = document.getElementById('chrono'); const bouton = document.querySelector('button');
-        function actualiser() { const heures = Math.floor(restant / 3600); const minutes = Math.floor((restant % 3600) / 60); const secondes = restant % 60; chrono.textContent = [heures, minutes, secondes].map(v => String(v).padStart(2, '0')).join(':'); if (restant <= 0) { bouton.disabled = true; return; } restant -= 1; setTimeout(actualiser, 1000); }
-        actualiser();
-    </script>
-</main></body>
-</html>
+{% extends "base.html" %}
+{% block title %}{{ devoir['titre'] }} · ClasseXP{% endblock %}
+{% block content %}
+<div class="exam-page" data-exam data-remaining="{{ restant }}">
+  <a class="back-link" href="{{ url_for('dashboard_eleve') }}"><span aria-hidden="true">←</span> Retour au tableau de bord</a>
+  <header class="exam-header"><div><p class="eyebrow">{{ devoir['classe_nom'] }}</p><h1>{{ devoir['titre'] }}</h1><p>{{ devoir['description'] or 'Prenez connaissance du sujet avant de déposer votre travail.' }}</p></div><div class="timer-card" data-timer-card><span>Temps restant</span><strong id="chrono" data-countdown aria-live="polite">--:--:--</strong><small data-timer-status>L’épreuve est en cours</small></div></header>
+  <div class="exam-progress" aria-hidden="true"><span class="is-done">1</span><i></i><span class="is-active">2</span><i></i><span>3</span></div>
+  <div class="exam-grid">
+    <section class="panel exam-section"><div class="exam-section-heading"><span class="section-number">1</span><div><h2>Consultez le sujet</h2><p>Ouvrez le document dans un nouvel onglet pour commencer.</p></div></div><div class="subject-file"><span class="file-icon" aria-hidden="true">DOC</span><div><strong>Sujet du devoir</strong><small>Document fourni par votre professeur</small></div><a class="button button-secondary button-compact" href="{{ url_for('telecharger_fichier', nom_fichier='sujets/' ~ devoir['sujet_pdf']) }}" target="_blank" rel="noopener">Consulter <span aria-hidden="true">↗</span></a></div></section>
+    <section class="panel exam-section"><div class="exam-section-heading"><span class="section-number">2</span><div><h2>Ajoutez votre copie</h2><p>Un seul fichier est accepté pour cette remise.</p></div></div><form action="{{ url_for('rendre_copie') }}" method="post" enctype="multipart/form-data" data-submit-form><input type="hidden" name="devoir_id" value="{{ devoir['id'] }}"><label class="dropzone compact-dropzone" for="copie" data-dropzone><input id="copie" type="file" name="copie" accept=".pdf,.docx,.jpg,.png" required data-file-input><span class="upload-icon" aria-hidden="true">⇧</span><strong>Ajouter votre copie</strong><span>PDF, DOCX, JPG ou PNG</span><span class="file-selection" data-file-name aria-live="polite"></span></label><div class="submit-note"><span aria-hidden="true">ⓘ</span><p>Vérifiez votre fichier : la remise mettra fin à votre session.</p></div><button class="button button-primary button-block" type="submit" data-submit-button>Rendre le devoir <span aria-hidden="true">→</span></button></form></section>
+  </div>
+</div>
+{% endblock %}

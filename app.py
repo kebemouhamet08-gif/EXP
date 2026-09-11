@@ -1,4 +1,5 @@
 import os
+import json
 import secrets
 import sqlite3
 import uuid
@@ -9,11 +10,18 @@ from flask import Flask, abort, current_app, g, redirect, render_template, reque
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from flask_login.config import COOKIE_DURATION, COOKIE_HTTPONLY, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE
 from flask_login.utils import encode_cookie
+from authlib.integrations.flask_client import OAuth
+from authlib.integrations.base_client.errors import OAuthError
+from joserfc import jwt
+from joserfc.jwk import ECKey
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('CLASSEXP_SECRET_KEY', 'dev-secret-change-me')
+configured_secret_key = os.environ.get('CLASSEXP_SECRET_KEY')
+if os.environ.get('CLASSEXP_HTTPS') == '1' and not configured_secret_key:
+    raise RuntimeError('CLASSEXP_SECRET_KEY est obligatoire en production HTTPS.')
+app.config['SECRET_KEY'] = configured_secret_key or secrets.token_hex(32)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
 app.config['DATABASE'] = os.path.join(app.root_path, 'database', 'classexp.db')
@@ -24,7 +32,84 @@ app.config['REMEMBER_COOKIE_SECURE'] = os.environ.get('CLASSEXP_HTTPS') == '1'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('CLASSEXP_HTTPS') == '1'
+app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID')
+app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET')
+app.config['FACEBOOK_CLIENT_ID'] = os.environ.get('FACEBOOK_CLIENT_ID')
+app.config['FACEBOOK_CLIENT_SECRET'] = os.environ.get('FACEBOOK_CLIENT_SECRET')
+app.config['FACEBOOK_API_VERSION'] = os.environ.get('FACEBOOK_API_VERSION', 'v25.0')
+app.config['APPLE_CLIENT_ID'] = os.environ.get('APPLE_CLIENT_ID')
+app.config['APPLE_TEAM_ID'] = os.environ.get('APPLE_TEAM_ID')
+app.config['APPLE_KEY_ID'] = os.environ.get('APPLE_KEY_ID')
+app.config['APPLE_PRIVATE_KEY_PATH'] = os.environ.get('APPLE_PRIVATE_KEY_PATH')
+app.config['MICROSOFT_CLIENT_ID'] = os.environ.get('MICROSOFT_CLIENT_ID')
+app.config['MICROSOFT_CLIENT_SECRET'] = os.environ.get('MICROSOFT_CLIENT_SECRET')
+app.config['MICROSOFT_TENANT'] = os.environ.get('MICROSOFT_TENANT', 'common')
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'png', 'docx'}
+
+PROVIDERS = {
+    'google': {'label': 'Google', 'oidc': True},
+    'facebook': {'label': 'Facebook', 'oidc': False},
+    'apple': {'label': 'Apple', 'oidc': True},
+    'microsoft': {'label': 'Microsoft', 'oidc': True},
+}
+
+
+def apple_client_secret():
+    path = app.config.get('APPLE_PRIVATE_KEY_PATH')
+    if not path or not os.path.isfile(path):
+        return None
+    now = int(datetime.now(timezone.utc).timestamp())
+    with open(path, 'rb') as key_file:
+        key = key_file.read()
+    claims = {
+        'iss': app.config['APPLE_TEAM_ID'], 'iat': now, 'exp': now + 86400 * 30,
+        'aud': 'https://appleid.apple.com', 'sub': app.config['APPLE_CLIENT_ID'],
+    }
+    return jwt.encode(
+        {'alg': 'ES256', 'kid': app.config['APPLE_KEY_ID']}, claims,
+        ECKey.import_key(key), algorithms=['ES256'],
+    )
+
+
+def provider_configured(provider):
+    if provider == 'apple':
+        return all(app.config.get(key) for key in (
+            'APPLE_CLIENT_ID', 'APPLE_TEAM_ID', 'APPLE_KEY_ID', 'APPLE_PRIVATE_KEY_PATH'
+        )) and os.path.isfile(app.config['APPLE_PRIVATE_KEY_PATH'])
+    prefix = provider.upper()
+    return bool(app.config.get(f'{prefix}_CLIENT_ID') and app.config.get(f'{prefix}_CLIENT_SECRET'))
+
+
+oauth = OAuth(app)
+oauth.register(
+    'google', server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile', 'code_challenge_method': 'S256'},
+)
+if provider_configured('apple'):
+    # Apple returns scopes with a cross-site form POST; its state cookie therefore
+    # requires SameSite=None and Secure. Apple itself also requires an HTTPS domain.
+    app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+    app.config['SESSION_COOKIE_SECURE'] = True
+facebook_version = app.config['FACEBOOK_API_VERSION']
+oauth.register(
+    'facebook', authorize_url=f'https://www.facebook.com/{facebook_version}/dialog/oauth',
+    access_token_url=f'https://graph.facebook.com/{facebook_version}/oauth/access_token',
+    api_base_url=f'https://graph.facebook.com/{facebook_version}/',
+    client_kwargs={'scope': 'email', 'code_challenge_method': 'S256'},
+)
+oauth.register(
+    'apple', client_secret=apple_client_secret(),
+    server_metadata_url='https://appleid.apple.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email name', 'token_endpoint_auth_method': 'client_secret_post'},
+)
+oauth.register(
+    'microsoft',
+    server_metadata_url=(
+        f"https://login.microsoftonline.com/{app.config['MICROSOFT_TENANT']}"
+        '/v2.0/.well-known/openid-configuration'
+    ),
+    client_kwargs={'scope': 'openid email profile', 'code_challenge_method': 'S256'},
+)
 
 
 class ClasseXPLoginManager(LoginManager):
@@ -128,7 +213,87 @@ def ensure_db_initialized():
             db.commit()
 
 
+def migrate_auth_schema():
+    """Add external identities without changing existing user IDs or data."""
+    with app.app_context():
+        db = get_db()
+        before = db.execute('SELECT COUNT(*) FROM utilisateurs').fetchone()[0]
+        columns = {row['name']: row for row in db.execute('PRAGMA table_info(utilisateurs)')}
+        if columns['mot_de_passe_hash']['notnull']:
+            db.commit()
+            db.execute('PRAGMA foreign_keys = OFF')
+            try:
+                db.execute('BEGIN IMMEDIATE')
+                db.execute('''CREATE TABLE utilisateurs_auth_migration (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nom TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    mot_de_passe_hash TEXT,
+                    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR')) NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )''')
+                db.execute('''INSERT INTO utilisateurs_auth_migration
+                    (id, nom, email, mot_de_passe_hash, role)
+                    SELECT id, nom, email, mot_de_passe_hash, role FROM utilisateurs''')
+                db.execute('DROP TABLE utilisateurs')
+                db.execute('ALTER TABLE utilisateurs_auth_migration RENAME TO utilisateurs')
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.execute('PRAGMA foreign_keys = ON')
+        elif 'created_at' not in columns:
+            db.execute('ALTER TABLE utilisateurs ADD COLUMN created_at TEXT')
+            db.execute('UPDATE utilisateurs SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL')
+
+        db.execute('''CREATE TABLE IF NOT EXISTS identites_externes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            utilisateur_id INTEGER NOT NULL,
+            provider TEXT NOT NULL CHECK(provider IN ('google', 'facebook', 'apple', 'microsoft')),
+            provider_subject TEXT NOT NULL,
+            email_provider TEXT,
+            email_verified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_login_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (utilisateur_id) REFERENCES utilisateurs(id) ON DELETE CASCADE,
+            UNIQUE (provider, provider_subject)
+        )''')
+        db.commit()
+        after = db.execute('SELECT COUNT(*) FROM utilisateurs').fetchone()[0]
+        foreign_key_errors = db.execute('PRAGMA foreign_key_check').fetchall()
+        if before != after or foreign_key_errors:
+            raise RuntimeError('La migration OAuth n\'a pas preserve les donnees existantes.')
+
+
 ensure_db_initialized()
+migrate_auth_schema()
+
+
+def end_local_session():
+    """Clear all app state and instruct Flask-Login to expire its remember cookie."""
+    was_authenticated = current_user.is_authenticated
+    session.clear()
+    if was_authenticated:
+        logout_user()
+
+
+def replace_login(utilisateur, *, remember=False):
+    end_local_session()
+    login_user(Utilisateur(utilisateur), remember=remember)
+
+
+def csrf_token():
+    return session.setdefault('_csrf_token', secrets.token_urlsafe(32))
+
+
+def valid_csrf():
+    supplied = request.form.get('_csrf_token', '')
+    expected = session.get('_csrf_token', '')
+    return bool(expected and secrets.compare_digest(supplied, expected))
+
+
+app.jinja_env.globals['csrf_token'] = csrf_token
 
 
 @app.context_processor
@@ -191,29 +356,311 @@ def inscription():
 
 @app.route('/connexion', methods=['GET', 'POST'])
 def connexion():
-    if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
+    if request.method == 'GET':
+        if request.args.get('switch') == '1':
+            if current_user.is_authenticated:
+                end_local_session()
+            session['account_switch'] = True
+        elif current_user.is_authenticated:
+            return redirect(url_for('dashboard'))
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
         mot_de_passe = request.form.get('mot_de_passe', '')
         utilisateur = get_db().execute(
             'SELECT * FROM utilisateurs WHERE email = ?', (email,)
         ).fetchone()
-        if utilisateur is None or not check_password_hash(utilisateur['mot_de_passe_hash'], mot_de_passe):
-            return render_template('auth.html', mode='connexion', error='Email ou mot de passe incorrect.')
+        if (utilisateur is None or not utilisateur['mot_de_passe_hash']
+                or not check_password_hash(utilisateur['mot_de_passe_hash'], mot_de_passe)):
+            return render_template(
+                'auth.html', mode='connexion', error='Email ou mot de passe incorrect.',
+                providers=provider_status(), switch_mode=request.args.get('switch') == '1',
+            )
 
         remember = bool(request.form.get('remember'))
-        login_user(Utilisateur(utilisateur), remember=remember)
+        replace_login(utilisateur, remember=remember)
         return redirect(url_for('dashboard'))
 
-    return render_template('auth.html', mode='connexion')
+    return render_template(
+        'auth.html', mode='connexion', providers=provider_status(),
+        switch_mode=request.args.get('switch') == '1',
+    )
 
 
 @app.get('/deconnexion')
 @login_required
 def deconnexion():
-    logout_user()
+    end_local_session()
     return redirect(url_for('connexion'))
+
+
+@app.get('/changer-compte')
+@login_required
+def changer_compte():
+    end_local_session()
+    session['account_switch'] = True
+    return redirect(url_for('connexion', switch=1))
+
+
+def provider_status():
+    return [
+        {'id': provider, 'label': details['label'], 'configured': provider_configured(provider)}
+        for provider, details in PROVIDERS.items()
+    ]
+
+
+def normalized_truth(value):
+    return value is True or str(value).lower() == 'true'
+
+
+def exchange_external_profile(provider):
+    """Exchange a validated code and return only the identity data ClasseXP needs."""
+    client = oauth.create_client(provider)
+    if provider == 'apple':
+        client.client_secret = apple_client_secret()
+    token = client.authorize_access_token()
+    if provider == 'facebook':
+        response = client.get('me?fields=id,name,email', token=token)
+        response.raise_for_status()
+        raw = response.json()
+        subject = raw.get('id')
+        return {
+            'provider': provider, 'subject': subject, 'name': raw.get('name'),
+            'email': raw.get('email'), 'email_verified': bool(raw.get('email')),
+        }
+
+    raw = dict(token.get('userinfo') or {})
+    if provider == 'apple' and request.form.get('user'):
+        try:
+            first_login = json.loads(request.form['user'])
+        except (TypeError, ValueError):
+            first_login = {}
+        apple_name = first_login.get('name') or {}
+        raw['name'] = raw.get('name') or ' '.join(
+            part for part in (apple_name.get('firstName'), apple_name.get('lastName')) if part
+        )
+        raw['email'] = raw.get('email') or first_login.get('email')
+    return {
+        'provider': provider, 'subject': raw.get('sub'), 'name': raw.get('name'),
+        'email': raw.get('email'), 'email_verified': normalized_truth(raw.get('email_verified')),
+    }
+
+
+def external_identity_error(message, status=400):
+    return render_template('oauth_error.html', message=message), status
+
+
+@app.get('/auth/<provider>')
+def external_login(provider):
+    if provider not in PROVIDERS:
+        abort(404)
+    if not provider_configured(provider):
+        return external_identity_error(f"{PROVIDERS[provider]['label']} n'est pas configure.", 503)
+    linking = request.args.get('link') == '1'
+    if linking:
+        if not current_user.is_authenticated:
+            return redirect(url_for('connexion'))
+        session['oauth_link_user_id'] = current_user.id
+    elif current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+
+    client = oauth.create_client(provider)
+    if provider == 'apple':
+        client.client_secret = apple_client_secret()
+    redirect_uri = url_for('external_callback', provider=provider, _external=True)
+    params = {'nonce': secrets.token_urlsafe(32)} if PROVIDERS[provider].get('oidc') else {}
+    if provider == 'apple':
+        params.update(response_mode='form_post', response_type='code id_token')
+    if session.get('account_switch'):
+        if provider == 'google':
+            params['prompt'] = 'select_account'
+        elif provider == 'microsoft':
+            params['prompt'] = 'select_account'
+        elif provider == 'facebook':
+            params['auth_type'] = 'reauthorize'
+    return client.authorize_redirect(redirect_uri, **params)
+
+
+@app.route('/auth/<provider>/callback', methods=['GET', 'POST'])
+def external_callback(provider):
+    if provider not in PROVIDERS:
+        abort(404)
+    if not request.values.get('code'):
+        return external_identity_error('Le fournisseur n\'a retourne aucun code d\'autorisation.')
+    try:
+        profile = exchange_external_profile(provider)
+    except OAuthError:
+        return external_identity_error('La reponse OAuth est invalide ou a expire.')
+    except Exception:
+        current_app.logger.exception('Echec OAuth pour %s (aucun jeton journalise)', provider)
+        return external_identity_error('Impossible de valider cette connexion externe.')
+    if not profile.get('subject'):
+        return external_identity_error('Le fournisseur n\'a pas retourne d\'identifiant stable.')
+
+    db = get_db()
+    identity = db.execute(
+        '''SELECT ie.id AS identity_id, ie.utilisateur_id, u.* FROM identites_externes ie
+           JOIN utilisateurs u ON u.id = ie.utilisateur_id
+           WHERE ie.provider = ? AND ie.provider_subject = ?''',
+        (provider, profile['subject']),
+    ).fetchone()
+    linking_user_id = session.pop('oauth_link_user_id', None)
+    if linking_user_id is not None:
+        if not current_user.is_authenticated or current_user.id != int(linking_user_id):
+            return external_identity_error('La session de liaison n\'est plus valide.', 403)
+        if identity is not None and identity['utilisateur_id'] != current_user.id:
+            return external_identity_error('Cette identite externe appartient deja a un autre compte.', 409)
+        if identity is None:
+            db.execute(
+                '''INSERT INTO identites_externes
+                   (utilisateur_id, provider, provider_subject, email_provider, email_verified)
+                   VALUES (?, ?, ?, ?, ?)''',
+                (current_user.id, provider, profile['subject'], profile.get('email'),
+                 int(profile.get('email_verified', False))),
+            )
+            db.commit()
+        return redirect(url_for('mon_compte'))
+
+    if identity is not None:
+        db.execute(
+            '''UPDATE identites_externes SET last_login_at = CURRENT_TIMESTAMP,
+               email_provider = COALESCE(?, email_provider), email_verified = ? WHERE id = ?''',
+            (profile.get('email'), int(profile.get('email_verified', False)), identity['identity_id']),
+        )
+        db.commit()
+        replace_login(identity, remember=True)
+        return redirect(url_for('dashboard'))
+
+    session['pending_external_identity'] = profile
+    existing = None
+    if profile.get('email'):
+        existing = db.execute(
+            'SELECT id FROM utilisateurs WHERE lower(email) = lower(?)', (profile['email'],)
+        ).fetchone()
+    if existing is not None:
+        return redirect(url_for('lier_compte_existant'))
+    return redirect(url_for('finaliser_compte'))
+
+
+def pending_external_identity():
+    pending = session.get('pending_external_identity')
+    if not pending or pending.get('provider') not in PROVIDERS or not pending.get('subject'):
+        return None
+    return pending
+
+
+@app.route('/auth/finaliser', methods=['GET', 'POST'])
+def finaliser_compte():
+    pending = pending_external_identity()
+    if pending is None:
+        return redirect(url_for('connexion'))
+    error = None
+    if request.method == 'POST':
+        if not valid_csrf():
+            abort(400)
+        nom = request.form.get('nom', '').strip()
+        email = (pending.get('email') or request.form.get('email', '')).strip().lower()
+        role = request.form.get('role')
+        if not nom or not email or role not in {'ELEVE', 'PROFESSEUR'}:
+            error = 'Completez le nom, l\'adresse email et le role.'
+        elif get_db().execute('SELECT 1 FROM utilisateurs WHERE lower(email) = lower(?)', (email,)).fetchone():
+            pending['email'] = email
+            session['pending_external_identity'] = pending
+            return redirect(url_for('lier_compte_existant'))
+        else:
+            db = get_db()
+            try:
+                cursor = db.execute(
+                    'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, NULL, ?)',
+                    (nom, email, role),
+                )
+                db.execute(
+                    '''INSERT INTO identites_externes
+                       (utilisateur_id, provider, provider_subject, email_provider, email_verified)
+                       VALUES (?, ?, ?, ?, ?)''',
+                    (cursor.lastrowid, pending['provider'], pending['subject'], pending.get('email'),
+                     int(pending.get('email_verified', False))),
+                )
+                db.commit()
+            except sqlite3.IntegrityError:
+                db.rollback()
+                return external_identity_error('Cette identite est deja associee a un compte.', 409)
+            utilisateur = db.execute('SELECT * FROM utilisateurs WHERE id = ?', (cursor.lastrowid,)).fetchone()
+            replace_login(utilisateur, remember=True)
+            return redirect(url_for('dashboard'))
+    return render_template('oauth_finalize.html', pending=pending, error=error)
+
+
+@app.route('/auth/lier-compte-existant', methods=['GET', 'POST'])
+def lier_compte_existant():
+    pending = pending_external_identity()
+    if pending is None or not pending.get('email'):
+        return redirect(url_for('connexion'))
+    error = None
+    if request.method == 'POST':
+        if not valid_csrf():
+            abort(400)
+        db = get_db()
+        utilisateur = db.execute(
+            'SELECT * FROM utilisateurs WHERE lower(email) = lower(?)', (pending['email'],)
+        ).fetchone()
+        password = request.form.get('mot_de_passe', '')
+        if (utilisateur is None or not utilisateur['mot_de_passe_hash']
+                or not check_password_hash(utilisateur['mot_de_passe_hash'], password)):
+            error = 'Mot de passe ClasseXP incorrect.'
+        elif request.form.get('confirm_link') != '1':
+            error = 'Confirmez explicitement la liaison du fournisseur.'
+        else:
+            try:
+                db.execute(
+                    '''INSERT INTO identites_externes
+                       (utilisateur_id, provider, provider_subject, email_provider, email_verified)
+                       VALUES (?, ?, ?, ?, ?)''',
+                    (utilisateur['id'], pending['provider'], pending['subject'], pending.get('email'),
+                     int(pending.get('email_verified', False))),
+                )
+                db.commit()
+            except sqlite3.IntegrityError:
+                db.rollback()
+                return external_identity_error('Cette identite est deja associee a un compte.', 409)
+            replace_login(utilisateur, remember=True)
+            return redirect(url_for('mon_compte'))
+    return render_template('oauth_link_existing.html', pending=pending, error=error)
+
+
+@app.get('/mon-compte')
+@login_required
+def mon_compte():
+    utilisateur = get_db().execute('SELECT * FROM utilisateurs WHERE id = ?', (current_user.id,)).fetchone()
+    linked = {
+        row['provider'] for row in get_db().execute(
+            'SELECT provider FROM identites_externes WHERE utilisateur_id = ?', (current_user.id,)
+        )
+    }
+    return render_template(
+        'account.html', utilisateur=utilisateur, linked=linked, providers=provider_status(),
+    )
+
+
+@app.post('/mon-compte/delier/<provider>')
+@login_required
+def delier_fournisseur(provider):
+    if provider not in PROVIDERS:
+        abort(404)
+    if not valid_csrf():
+        abort(400)
+    db = get_db()
+    utilisateur = db.execute('SELECT mot_de_passe_hash FROM utilisateurs WHERE id = ?', (current_user.id,)).fetchone()
+    identity_count = db.execute(
+        'SELECT COUNT(*) FROM identites_externes WHERE utilisateur_id = ?', (current_user.id,)
+    ).fetchone()[0]
+    if not utilisateur['mot_de_passe_hash'] and identity_count <= 1:
+        return external_identity_error('Impossible de delier votre derniere methode de connexion.', 409)
+    db.execute(
+        'DELETE FROM identites_externes WHERE utilisateur_id = ? AND provider = ?',
+        (current_user.id, provider),
+    )
+    db.commit()
+    return redirect(url_for('mon_compte'))
 
 
 def role_requis(role):

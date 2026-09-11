@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Connexion externe · ClasseXP{% endblock %}
+{% block public_content %}
+<section class="auth-layout auth-layout--single"><div class="card auth-card">
+  <p class="eyebrow">Connexion externe</p><h1>Connexion impossible</h1>
+  <div class="alert alert-error" role="alert"><span aria-hidden="true">!</span><p>{{ message }}</p></div>
+  <a class="button button-primary button-block" href="{{ url_for('connexion') }}">Retour à la connexion</a>
+</div></section>
+{% endblock %}

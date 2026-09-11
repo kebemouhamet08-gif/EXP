@@ -15,7 +15,7 @@
     <div class="auth-card-heading">
       <p class="eyebrow">ClasseXP</p>
       <h2>{{ 'Bienvenue' if is_login else 'Créer un compte' }}</h2>
-      <p>{{ 'Saisissez vos identifiants pour continuer.' if is_login else 'Quelques informations suffisent pour démarrer.' }}</p>
+      <p>{{ 'Choisissez un autre compte.' if switch_mode else ('Saisissez vos identifiants pour continuer.' if is_login else 'Quelques informations suffisent pour démarrer.') }}</p>
     </div>
     {% if error %}<div class="alert alert-error" role="alert"><span aria-hidden="true">!</span><p>{{ error }}{% if compte_existant %} <a class="alert-link" href="{{ url_for('connexion') }}">Se connecter</a>{% endif %}</p></div>{% endif %}
     <form method="post" class="form-stack">
@@ -28,6 +28,18 @@
       {% if is_login %}<label class="remember-option"><input type="checkbox" name="remember" value="1"><span aria-hidden="true"></span>Se souvenir de moi</label>{% endif %}
       <button class="button button-primary button-block" type="submit">{{ 'Se connecter' if is_login else 'Créer mon compte' }} <span aria-hidden="true">→</span></button>
     </form>
+    {% if is_login and providers %}
+    <div class="auth-separator"><span>ou</span></div>
+    <div class="social-login-list">
+      {% for provider in providers %}
+        {% if provider.configured %}
+          <a class="button button-secondary button-block social-login social-login--{{ provider.id }}" href="{{ url_for('external_login', provider=provider.id) }}">Continuer avec {{ provider.label }}</a>
+        {% else %}
+          <button class="button button-secondary button-block social-login" type="button" disabled>{{ provider.label }} · Non configuré</button>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
     <p class="auth-switch">{{ 'Pas encore de compte ?' if is_login else 'Vous avez déjà un compte ?' }} <a href="{{ url_for('inscription' if is_login else 'connexion') }}">{{ 'Créer un compte' if is_login else 'Se connecter' }}</a></p>
   </div>
 </section>

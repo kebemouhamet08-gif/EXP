@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import Flask, abort, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
+from flask_login.config import COOKIE_DURATION, COOKIE_HTTPONLY, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE
+from flask_login.utils import encode_cookie
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -14,7 +17,60 @@ app.config['SECRET_KEY'] = os.environ.get('CLASSEXP_SECRET_KEY', 'dev-secret-cha
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
 app.config['DATABASE'] = os.path.join(app.root_path, 'database', 'classexp.db')
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
+app.config['REMEMBER_COOKIE_SECURE'] = os.environ.get('CLASSEXP_HTTPS') == '1'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('CLASSEXP_HTTPS') == '1'
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'png', 'docx'}
+
+
+class ClasseXPLoginManager(LoginManager):
+    """Flask-Login 0.6.3 cookie writer without its deprecated utcnow call."""
+
+    def _set_cookie(self, response):
+        if '_user_id' not in session:
+            return
+        config = current_app.config
+        cookie_name = config.get('REMEMBER_COOKIE_NAME', COOKIE_NAME)
+        domain = config.get('REMEMBER_COOKIE_DOMAIN')
+        path = config.get('REMEMBER_COOKIE_PATH', '/')
+        secure = config.get('REMEMBER_COOKIE_SECURE', COOKIE_SECURE)
+        httponly = config.get('REMEMBER_COOKIE_HTTPONLY', COOKIE_HTTPONLY)
+        samesite = config.get('REMEMBER_COOKIE_SAMESITE', COOKIE_SAMESITE)
+        duration = (
+            timedelta(seconds=session['_remember_seconds'])
+            if '_remember_seconds' in session
+            else config.get('REMEMBER_COOKIE_DURATION', COOKIE_DURATION)
+        )
+        if isinstance(duration, int):
+            duration = timedelta(seconds=duration)
+        expires = datetime.now(timezone.utc) + duration
+        response.set_cookie(
+            cookie_name, value=encode_cookie(str(session['_user_id'])), expires=expires,
+            domain=domain, path=path, secure=secure, httponly=httponly, samesite=samesite,
+        )
+
+
+login_manager = ClasseXPLoginManager(app)
+login_manager.login_view = 'connexion'
+login_manager.login_message = None
+login_manager.session_protection = 'strong'
+
+
+class Utilisateur(UserMixin):
+    """Minimal Flask-Login user backed by the existing SQLite row."""
+
+    def __init__(self, row):
+        self.id = int(row['id'])
+        self.nom = row['nom']
+        self.email = row['email']
+        self.role = row['role']
+
+    def __getitem__(self, key):
+        return getattr(self, key)
 
 
 def utc_now():
@@ -38,6 +94,18 @@ def close_connection(exception):
     db = getattr(g, '_database', None)
     if db is not None:
         db.close()
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    try:
+        utilisateur_id = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    row = get_db().execute(
+        'SELECT id, nom, email, role FROM utilisateurs WHERE id = ?', (utilisateur_id,)
+    ).fetchone()
+    return Utilisateur(row) if row is not None else None
 
 
 def init_db():
@@ -66,13 +134,9 @@ ensure_db_initialized()
 @app.context_processor
 def inject_navigation_context():
     """Expose the signed-in user to the shared application shell."""
-    utilisateur_id = session.get('utilisateur_id')
-    if utilisateur_id is None:
+    if not current_user.is_authenticated:
         return {}
-    utilisateur = get_db().execute(
-        'SELECT nom, email, role FROM utilisateurs WHERE id = ?', (utilisateur_id,)
-    ).fetchone()
-    return {'nav_utilisateur': utilisateur, 'nav_role': session.get('role')}
+    return {'nav_utilisateur': current_user, 'nav_role': current_user.role}
 
 
 @app.cli.command('init-db')
@@ -89,6 +153,8 @@ def accueil():
 
 @app.route('/inscription', methods=['GET', 'POST'])
 def inscription():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
     if request.method == 'POST':
         nom = request.form.get('nom', '').strip()
         email = request.form.get('email', '').strip().lower()
@@ -100,15 +166,24 @@ def inscription():
         if role not in {'ELEVE', 'PROFESSEUR'}:
             return render_template('auth.html', mode='inscription', error='Role invalide.')
 
+        db = get_db()
+        if db.execute('SELECT 1 FROM utilisateurs WHERE email = ?', (email,)).fetchone() is not None:
+            return render_template(
+                'auth.html', mode='inscription', compte_existant=True,
+                error='Un compte existe deja avec cette adresse email.',
+            )
+
         try:
-            db = get_db()
             db.execute(
                 'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, ?, ?)',
                 (nom, email, generate_password_hash(mot_de_passe), role),
             )
             db.commit()
         except sqlite3.IntegrityError:
-            return render_template('auth.html', mode='inscription', error='Cette adresse email est deja utilisee.')
+            return render_template(
+                'auth.html', mode='inscription', compte_existant=True,
+                error='Un compte existe deja avec cette adresse email.',
+            )
         return redirect(url_for('connexion'))
 
     return render_template('auth.html', mode='inscription')
@@ -116,6 +191,8 @@ def inscription():
 
 @app.route('/connexion', methods=['GET', 'POST'])
 def connexion():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
         mot_de_passe = request.form.get('mot_de_passe', '')
@@ -125,40 +202,31 @@ def connexion():
         if utilisateur is None or not check_password_hash(utilisateur['mot_de_passe_hash'], mot_de_passe):
             return render_template('auth.html', mode='connexion', error='Email ou mot de passe incorrect.')
 
-        session.clear()
-        session['utilisateur_id'] = utilisateur['id']
-        session['role'] = utilisateur['role']
+        remember = bool(request.form.get('remember'))
+        login_user(Utilisateur(utilisateur), remember=remember)
         return redirect(url_for('dashboard'))
 
     return render_template('auth.html', mode='connexion')
 
 
 @app.get('/deconnexion')
+@login_required
 def deconnexion():
-    session.clear()
+    logout_user()
     return redirect(url_for('connexion'))
-
-
-def connexion_requise(route):
-    @wraps(route)
-    def route_protegee(*args, **kwargs):
-        if 'utilisateur_id' not in session:
-            return redirect(url_for('connexion'))
-        return route(*args, **kwargs)
-    return route_protegee
 
 
 def role_requis(role):
     def decorateur(route):
         @wraps(route)
-        @connexion_requise
+        @login_required
         def route_protegee(*args, **kwargs):
-            if session.get('role') != role:
-                if session.get('role') == 'PROFESSEUR':
+            if current_user.role != role:
+                if current_user.role == 'PROFESSEUR':
                     return redirect(url_for('dashboard_professeur'))
-                if session.get('role') == 'ELEVE':
+                if current_user.role == 'ELEVE':
                     return redirect(url_for('dashboard_eleve'))
-                session.clear()
+                logout_user()
                 return redirect(url_for('connexion'))
             return route(*args, **kwargs)
         return route_protegee
@@ -166,9 +234,9 @@ def role_requis(role):
 
 
 @app.get('/dashboard')
-@connexion_requise
+@login_required
 def dashboard():
-    if session['role'] == 'PROFESSEUR':
+    if current_user.role == 'PROFESSEUR':
         return redirect(url_for('dashboard_professeur'))
     return redirect(url_for('dashboard_eleve'))
 
@@ -177,7 +245,7 @@ def dashboard():
 @role_requis('ELEVE')
 def dashboard_eleve():
     utilisateur = get_db().execute(
-        'SELECT nom, email FROM utilisateurs WHERE id = ?', (session['utilisateur_id'],)
+        'SELECT nom, email FROM utilisateurs WHERE id = ?', (current_user.id,)
     ).fetchone()
     devoirs = get_db().execute(
           '''SELECT d.*, c.nom AS classe_nom, s.note, s.commentaire,
@@ -189,11 +257,11 @@ def dashboard_eleve():
               LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.eleve_id = ?
            WHERE ce.eleve_id = ?
            ORDER BY d.date_ouverture DESC''',
-          (session['utilisateur_id'], session['utilisateur_id'], session['utilisateur_id']),
+          (current_user.id, current_user.id, current_user.id),
     ).fetchall()
     classes = get_db().execute(
         'SELECT c.nom, c.code FROM classes c JOIN classe_eleves ce ON ce.classe_id = c.id WHERE ce.eleve_id = ?',
-        (session['utilisateur_id'],),
+        (current_user.id,),
     ).fetchall()
     devoirs_en_cours = sum(1 for devoir in devoirs if devoir['statut'] == 'EN_COURS')
     notes = [devoir['note'] for devoir in devoirs if devoir['note'] is not None]
@@ -208,14 +276,14 @@ def dashboard_eleve():
 @role_requis('PROFESSEUR')
 def dashboard_professeur():
     utilisateur = get_db().execute(
-        'SELECT nom, email FROM utilisateurs WHERE id = ?', (session['utilisateur_id'],)
+        'SELECT nom, email FROM utilisateurs WHERE id = ?', (current_user.id,)
     ).fetchone()
     db = get_db()
     classes = db.execute(
         '''SELECT c.*, COUNT(ce.eleve_id) AS nombre_eleves
            FROM classes c LEFT JOIN classe_eleves ce ON ce.classe_id = c.id
            WHERE c.professeur_id = ? GROUP BY c.id ORDER BY c.nom''',
-        (session['utilisateur_id'],),
+        (current_user.id,),
     ).fetchall()
     devoirs = db.execute(
         '''SELECT d.*, c.nom AS classe_nom,
@@ -224,7 +292,7 @@ def dashboard_professeur():
            FROM devoirs d JOIN classes c ON c.id = d.classe_id
            LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.fichier_copie IS NOT NULL
            WHERE d.professeur_id = ? GROUP BY d.id ORDER BY d.date_ouverture DESC''',
-        (session['utilisateur_id'],),
+        (current_user.id,),
     ).fetchall()
     return render_template(
         'dashboard.html', utilisateur=utilisateur, role='PROFESSEUR',
@@ -241,7 +309,7 @@ def nouvelle_classe():
             return render_template('formulaire.html', type_formulaire='classe', error='Le nom est obligatoire.')
         code = secrets.token_hex(3).upper()
         db = get_db()
-        db.execute('INSERT INTO classes (nom, professeur_id, code) VALUES (?, ?, ?)', (nom, session['utilisateur_id'], code))
+        db.execute('INSERT INTO classes (nom, professeur_id, code) VALUES (?, ?, ?)', (nom, current_user.id, code))
         db.commit()
         return redirect(url_for('dashboard_professeur'))
     return render_template('formulaire.html', type_formulaire='classe')
@@ -255,7 +323,7 @@ def rejoindre_classe():
     if classe is None:
         return 'Code de classe invalide. Vérifiez le code transmis par le professeur.', 404
     db = get_db()
-    db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], session['utilisateur_id']))
+    db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], current_user.id))
     db.commit()
     return redirect(url_for('dashboard_eleve'))
 
@@ -264,7 +332,7 @@ def rejoindre_classe():
 @role_requis('PROFESSEUR')
 def nouveau_devoir():
     db = get_db()
-    classes = db.execute('SELECT id, nom FROM classes WHERE professeur_id = ? ORDER BY nom', (session['utilisateur_id'],)).fetchall()
+    classes = db.execute('SELECT id, nom FROM classes WHERE professeur_id = ? ORDER BY nom', (current_user.id,)).fetchall()
     if request.method == 'POST':
         titre = request.form.get('titre', '').strip()
         classe_id = request.form.get('classe_id', type=int)
@@ -272,7 +340,7 @@ def nouveau_devoir():
         ouverture = request.form.get('date_ouverture', '').strip()
         sujet = request.files.get('sujet')
         nom_sujet = nom_stockage_unique(sujet.filename) if sujet is not None else None
-        classe = db.execute('SELECT id FROM classes WHERE id = ? AND professeur_id = ?', (classe_id, session['utilisateur_id'])).fetchone()
+        classe = db.execute('SELECT id FROM classes WHERE id = ? AND professeur_id = ?', (classe_id, current_user.id)).fetchone()
         if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or nom_sujet is None:
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Tous les champs sont obligatoires. La duree minimale est de 60 secondes.')
         try:
@@ -285,7 +353,7 @@ def nouveau_devoir():
         db.execute(
             '''INSERT INTO devoirs (titre, description, professeur_id, classe_id, sujet_pdf, date_ouverture, duree)
                VALUES (?, ?, ?, ?, ?, ?, ?)''',
-            (titre, request.form.get('description', '').strip(), session['utilisateur_id'], classe_id, nom_sujet, ouverture, duree),
+            (titre, request.form.get('description', '').strip(), current_user.id, classe_id, nom_sujet, ouverture, duree),
         )
         db.commit()
         return redirect(url_for('dashboard_professeur'))
@@ -297,7 +365,7 @@ def nouveau_devoir():
 def voir_copies(devoir_id):
     devoir = get_db().execute(
         'SELECT * FROM devoirs WHERE id = ? AND professeur_id = ?',
-        (devoir_id, session['utilisateur_id']),
+        (devoir_id, current_user.id),
     ).fetchone()
     if devoir is None:
         return 'Devoir introuvable.', 404
@@ -324,7 +392,7 @@ def noter_copie(session_id):
     examen = db.execute(
         '''SELECT s.id FROM sessions_examen s JOIN devoirs d ON d.id = s.devoir_id
            WHERE s.id = ? AND d.professeur_id = ?''',
-        (session_id, session['utilisateur_id']),
+        (session_id, current_user.id),
     ).fetchone()
     if examen is None:
         return 'Copie introuvable.', 404
@@ -339,7 +407,7 @@ def devoir_accessible(devoir_id):
            JOIN classes c ON c.id = d.classe_id
            JOIN classe_eleves ce ON ce.classe_id = c.id
            WHERE d.id = ? AND ce.eleve_id = ?''',
-        (devoir_id, session['utilisateur_id']),
+        (devoir_id, current_user.id),
     ).fetchone()
 
 
@@ -356,7 +424,7 @@ def commencer_devoir(devoir_id):
     db = get_db()
     db.execute(
         'INSERT OR IGNORE INTO sessions_examen (eleve_id, devoir_id, heure_debut) VALUES (?, ?, ?)',
-        (session['utilisateur_id'], devoir_id, maintenant.isoformat(timespec='seconds')),
+        (current_user.id, devoir_id, maintenant.isoformat(timespec='seconds')),
     )
     db.commit()
     return redirect(url_for('voir_devoir', devoir_id=devoir_id))
@@ -370,7 +438,7 @@ def voir_devoir(devoir_id):
         return 'Devoir introuvable.', 404
     examen = get_db().execute(
         'SELECT * FROM sessions_examen WHERE eleve_id = ? AND devoir_id = ?',
-        (session['utilisateur_id'], devoir_id),
+        (current_user.id, devoir_id),
     ).fetchone()
     if examen is None:
         return redirect(url_for('dashboard_eleve'))
@@ -393,7 +461,7 @@ def nom_stockage_unique(nom_original):
 
 
 @app.post('/rendre_copie')
-@connexion_requise
+@login_required
 def rendre_copie():
     devoir_id = request.form.get('devoir_id', type=int)
     if devoir_id is None:
@@ -401,7 +469,7 @@ def rendre_copie():
     devoir = devoir_accessible(devoir_id)
     examen = get_db().execute(
         'SELECT * FROM sessions_examen WHERE eleve_id = ? AND devoir_id = ?',
-        (session['utilisateur_id'], devoir_id),
+        (current_user.id, devoir_id),
     ).fetchone()
     if devoir is None or examen is None:
         return 'Session invalide.', 403
@@ -427,25 +495,26 @@ def rendre_copie():
 
 
 @app.get('/copie-deposee')
+@login_required
 def copie_deposee():
     return 'Votre copie a bien ete deposee.'
 
 
 @app.get('/uploads/<path:nom_fichier>')
-@connexion_requise
+@login_required
 def telecharger_fichier(nom_fichier):
     parties = nom_fichier.replace('\\', '/').split('/')
     if len(parties) == 2 and parties[0] == 'sujets':
-        if session.get('role') == 'PROFESSEUR':
+        if current_user.role == 'PROFESSEUR':
             autorise = get_db().execute(
                 'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
-                (parties[1], session['utilisateur_id']),
+                (parties[1], current_user.id),
             ).fetchone() is not None
         else:
             autorise = get_db().execute(
                 '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
                    WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
-                (parties[1], session['utilisateur_id']),
+                (parties[1], current_user.id),
             ).fetchone() is not None
     elif len(parties) == 3 and parties[0] == 'copies' and parties[1].isdigit():
         copie = get_db().execute(
@@ -457,11 +526,11 @@ def telecharger_fichier(nom_fichier):
         if copie is None:
             abort(404)
         autorise = (
-            session.get('role') == 'PROFESSEUR'
-            and copie['professeur_id'] == session['utilisateur_id']
+            current_user.role == 'PROFESSEUR'
+            and copie['professeur_id'] == current_user.id
         ) or (
-            session.get('role') == 'ELEVE'
-            and copie['eleve_id'] == session['utilisateur_id']
+            current_user.role == 'ELEVE'
+            and copie['eleve_id'] == current_user.id
         )
     else:
         abort(404)

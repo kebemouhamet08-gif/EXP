@@ -40,6 +40,21 @@ def init_db():
         db.commit()
 
 
+def ensure_db_initialized():
+    with app.app_context():
+        db = get_db()
+        table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'utilisateurs'"
+        ).fetchone()
+        if table is None:
+            with app.open_resource('schema.sql', mode='r', encoding='utf-8') as file:
+                db.executescript(file.read())
+            db.commit()
+
+
+ensure_db_initialized()
+
+
 @app.cli.command('init-db')
 def init_db_command():
     """Efface les donnees existantes et cree les tables."""

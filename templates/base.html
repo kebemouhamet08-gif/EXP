@@ -1,63 +1,81 @@
+{% from "_icons.html" import icon, logo %}
 <!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0b1020">
+  <meta name="theme-color" content="#07111f">
   <meta name="color-scheme" content="dark">
   <title>{% block title %}ClasseXP{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   {% block head %}{% endblock %}
 </head>
-{% set package_app = request.endpoint and request.endpoint.startswith('pages.') %}
-{% set connected_page = role is defined or audience is defined or request.endpoint in ['nouvelle_classe', 'nouveau_devoir', 'voir_devoir', 'voir_copies'] %}
-<body class="{% if connected_page %}app-page{% else %}public-page{% endif %}">
+{% set connected_page = nav_utilisateur is defined and nav_utilisateur %}
+{% set active_role = nav_role|default(role|default('')) %}
+<body class="{{ 'app-page' if connected_page else 'public-page' }}">
   <a class="skip-link" href="#main-content">Aller au contenu</a>
-  <header class="topbar">
-    <a class="brand" href="{{ url_for('pages.home') if package_app else url_for('accueil') }}" aria-label="ClasseXP, accueil">
-      <span class="brand-mark" aria-hidden="true">CX</span><span>Classe<span>XP</span></span>
-    </a>
+  <header class="topbar {{ 'app-topbar' if connected_page else 'public-topbar' }}">
+    <a class="brand" href="{{ url_for('dashboard') if connected_page else url_for('accueil') }}" aria-label="ClasseXP, accueil">{{ logo() }}</a>
     {% if connected_page %}
-    <button class="icon-button menu-toggle" type="button" data-menu-toggle aria-controls="app-sidebar" aria-expanded="false">
-      <span class="sr-only">Ouvrir la navigation</span>
-      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-    </button>
-    <div class="account-chip">
-      <span class="avatar" aria-hidden="true">{{ utilisateur['nom'][0] if utilisateur is defined and utilisateur else ('P' if audience|default('') == 'professeur' else 'E') }}</span>
-      <span class="account-copy"><strong>{{ utilisateur['nom'] if utilisateur is defined and utilisateur else 'Mon espace' }}</strong><small>{{ 'Professeur' if role|default('') == 'PROFESSEUR' or audience|default('') == 'professeur' else 'Élève' }}</small></span>
-      {% if not package_app %}<a class="button button-ghost button-compact" href="{{ url_for('deconnexion') }}">Déconnexion</a>{% endif %}
-    </div>
+      <button class="icon-button menu-toggle" type="button" data-menu-toggle aria-controls="app-sidebar" aria-expanded="false">
+        <span class="sr-only">Ouvrir la navigation</span>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="search-display" aria-label="Recherche, bientôt disponible">
+        {{ icon('search') }}<span>Rechercher un devoir, une classe, un fichier…</span><small>Bientôt</small>
+      </div>
+      <div class="topbar-account">
+        <span class="notification" aria-label="Notifications, bientôt disponible">{{ icon('bell') }}<i aria-hidden="true"></i></span>
+        <span class="avatar" aria-hidden="true">{{ nav_utilisateur['nom'][0]|upper }}</span>
+        <span class="account-copy"><strong>{{ nav_utilisateur['nom'] }}</strong><small>{{ 'Professeur' if active_role == 'PROFESSEUR' else 'Élève' }}</small></span>
+        <a class="logout-link" href="{{ url_for('deconnexion') }}" aria-label="Se déconnecter">{{ icon('logout') }}</a>
+      </div>
     {% else %}
-    <nav class="public-nav" aria-label="Navigation principale">
-      {% if request.endpoint not in ['connexion', 'pages.login'] %}<a class="button button-secondary button-compact" href="{{ url_for('pages.login') if package_app else url_for('connexion') }}">Se connecter</a>{% endif %}
-      {% if not package_app and request.endpoint != 'inscription' %}<a class="button button-primary button-compact" href="{{ url_for('inscription') }}">Créer un compte</a>{% endif %}
-    </nav>
+      <nav class="landing-nav" aria-label="Navigation principale">
+        <a class="is-active" href="{{ url_for('accueil') }}">Accueil</a>
+        <a href="{{ url_for('accueil') }}#fonctionnalites">Fonctionnalités</a>
+        <a href="{{ url_for('accueil') }}#a-propos">À propos</a>
+      </nav>
+      <nav class="public-actions" aria-label="Accès au compte">
+        {% if request.endpoint != 'connexion' %}<a class="button button-ghost button-compact" href="{{ url_for('connexion') }}">Connexion</a>{% endif %}
+        {% if request.endpoint != 'inscription' %}<a class="button button-primary button-compact" href="{{ url_for('inscription') }}">Créer un compte</a>{% endif %}
+      </nav>
     {% endif %}
   </header>
 
   {% if connected_page %}
-  <div class="app-layout">
-    <aside class="sidebar" id="app-sidebar" data-sidebar>
-      <nav aria-label="Navigation de l’espace personnel">
-        {% if package_app %}
-          <a class="nav-item is-active" href="{{ request.path }}"><span aria-hidden="true">⌂</span> Tableau de bord</a>
-        {% elif role|default('') == 'PROFESSEUR' or request.endpoint in ['nouvelle_classe', 'nouveau_devoir', 'voir_copies'] %}
-          <a class="nav-item {% if request.endpoint == 'dashboard_professeur' %}is-active{% endif %}" href="{{ url_for('dashboard_professeur') }}"><span aria-hidden="true">⌂</span> Tableau de bord</a>
-          <a class="nav-item {% if request.endpoint == 'nouvelle_classe' %}is-active{% endif %}" href="{{ url_for('nouvelle_classe') }}"><span aria-hidden="true">▦</span> Nouvelle classe</a>
-          <a class="nav-item {% if request.endpoint == 'nouveau_devoir' %}is-active{% endif %}" href="{{ url_for('nouveau_devoir') }}"><span aria-hidden="true">✎</span> Nouveau devoir</a>
-        {% else %}
-          <a class="nav-item {% if request.endpoint == 'dashboard_eleve' %}is-active{% endif %}" href="{{ url_for('dashboard_eleve') }}"><span aria-hidden="true">⌂</span> Tableau de bord</a>
-          {% if request.endpoint == 'voir_devoir' %}<a class="nav-item is-active" href="{{ request.path }}"><span aria-hidden="true">✎</span> Devoir en cours</a>{% endif %}
-        {% endif %}
-      </nav>
-      <div class="sidebar-footer"><p><span class="status-dot"></span> Espace sécurisé</p>{% if not package_app %}<a class="nav-item mobile-only" href="{{ url_for('deconnexion') }}">Déconnexion</a>{% endif %}</div>
-    </aside>
-    <div class="sidebar-backdrop" data-sidebar-backdrop></div>
-    <main class="app-content" id="main-content">{% block content %}{% endblock %}</main>
-  </div>
+    <div class="app-shell">
+      <aside class="sidebar" id="app-sidebar" data-sidebar>
+        <nav aria-label="Navigation de l’espace personnel">
+          <a class="sidebar-item {{ 'sidebar-item--active' if request.endpoint in ['dashboard_professeur', 'dashboard_eleve'] }}" href="{{ url_for('dashboard') }}">{{ icon('home') }}<span>Tableau de bord</span></a>
+          {% if active_role == 'PROFESSEUR' %}
+            <a class="sidebar-item {{ 'sidebar-item--active' if request.endpoint == 'nouvelle_classe' }}" href="{{ url_for('nouvelle_classe') }}">{{ icon('classes') }}<span>Classes</span></a>
+            <a class="sidebar-item {{ 'sidebar-item--active' if request.endpoint == 'nouveau_devoir' }}" href="{{ url_for('nouveau_devoir') }}">{{ icon('document') }}<span>Devoirs</span></a>
+            <span class="sidebar-item sidebar-item--disabled">{{ icon('folder') }}<span>Copies<small>Bientôt</small></span></span>
+            <span class="sidebar-item sidebar-item--disabled">{{ icon('chart') }}<span>Progression<small>Bientôt</small></span></span>
+          {% else %}
+            <a class="sidebar-item" href="{{ url_for('dashboard_eleve') }}#mes-classes">{{ icon('classes') }}<span>Mes classes</span></a>
+            <a class="sidebar-item {{ 'sidebar-item--active' if request.endpoint == 'voir_devoir' }}" href="{{ url_for('dashboard_eleve') }}#devoirs">{{ icon('document') }}<span>Devoirs</span></a>
+            <a class="sidebar-item" href="{{ url_for('dashboard_eleve') }}#notes">{{ icon('chart') }}<span>Notes</span></a>
+            <span class="sidebar-item sidebar-item--disabled">{{ icon('folder') }}<span>Fichiers<small>Bientôt</small></span></span>
+          {% endif %}
+          <span class="sidebar-separator" aria-hidden="true"></span>
+          <span class="sidebar-item sidebar-item--disabled">{{ icon('settings') }}<span>Paramètres<small>Bientôt</small></span></span>
+        </nav>
+        <div class="sidebar-card">
+          <span class="sidebar-card-cap">{{ logo() }}</span>
+          <strong>Toujours plus loin avec <span>ClasseXP</span></strong>
+          <p>Apprendre aujourd’hui.<br>Réussir demain.</p>
+        </div>
+        <a class="sidebar-item mobile-logout" href="{{ url_for('deconnexion') }}">{{ icon('logout') }}<span>Déconnexion</span></a>
+      </aside>
+      <button class="sidebar-backdrop" type="button" data-sidebar-backdrop aria-label="Fermer la navigation"></button>
+      <main class="main-content" id="main-content">{% block content %}{% endblock %}</main>
+    </div>
   {% else %}
-  <main class="page-shell" id="main-content">{% block public_content %}{% endblock %}</main>
+    <main id="main-content">{% block public_content %}{% endblock %}</main>
   {% endif %}
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>

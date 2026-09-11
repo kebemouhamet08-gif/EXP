@@ -1,34 +1,57 @@
 {% extends "base.html" %}
-{% block title %}ClasseXP · Apprendre, progresser, réussir{% endblock %}
+{% from "_icons.html" import icon, logo %}
+{% block title %}ClasseXP · La classe continue, simplement{% endblock %}
 {% block public_content %}
-<section class="landing" aria-labelledby="hero-title">
+<section class="landing-hero" aria-labelledby="hero-title">
+  <div class="hero-orb hero-orb-one" aria-hidden="true"></div>
+  <div class="hero-orb hero-orb-two" aria-hidden="true"></div>
   <div class="hero-copy">
-    <p class="eyebrow"><span></span> L’espace de travail de votre classe</p>
-    <h1 id="hero-title">Apprendre, progresser, <span class="gradient-text">réussir.</span></h1>
-    <p class="hero-lead">Classes, devoirs et remises réunis dans une expérience claire, pour que chacun reste concentré sur l’essentiel.</p>
+    <p class="eyebrow">Apprendre, progresser, réussir</p>
+    <h1 id="hero-title">La classe continue,<br><span class="gradient-text">simplement.</span></h1>
+    <p class="hero-lead">ClasseXP simplifie la gestion de vos classes, de vos devoirs et de leurs remises, tout en permettant de suivre la progression de chaque élève.</p>
     <div class="hero-actions">
-      <a class="button button-primary" href="{{ url_for('pages.login') if request.endpoint and request.endpoint.startswith('pages.') else url_for('connexion') }}">Se connecter <span aria-hidden="true">→</span></a>
-      {% if not (request.endpoint and request.endpoint.startswith('pages.')) %}<a class="button button-secondary" href="{{ url_for('inscription') }}">Créer un compte</a>{% endif %}
+      <a class="button button-primary button-large" href="{{ url_for('connexion') }}">Se connecter {{ icon('arrow') }}</a>
+      <a class="button button-secondary button-large" href="#fonctionnalites">Découvrir ClasseXP</a>
     </div>
-    <p class="trust-line"><span aria-hidden="true">✓</span> Simple pour les élèves, efficace pour les professeurs</p>
+    <div class="hero-benefits" id="a-propos" aria-label="Avantages de ClasseXP">
+      <span>{{ icon('classes') }}Pour les enseignants<br>et les élèves</span>
+      <span>{{ icon('document') }}Simple et sécurisé</span>
+      <span>{{ icon('chart') }}Une éducation<br>plus connectée</span>
+    </div>
   </div>
+
   <div class="hero-visual" aria-hidden="true">
-    <div class="visual-glow"></div>
-    <div class="preview-window">
-      <div class="preview-top"><i></i><i></i><i></i><span>ClasseXP</span></div>
-      <div class="preview-body"><div class="preview-sidebar"><b></b><b></b><b></b><b></b></div><div class="preview-content"><span class="preview-label">Bonjour Camille</span><strong>Votre prochain devoir</strong><div class="preview-card"><span>Mathématiques</span><em>Disponible</em><b></b><b></b></div><div class="preview-stats"><span></span><span></span><span></span></div></div></div>
+    <p class="handwritten-note">Des élèves plus autonomes,<br>une école plus sereine.</p>
+    <div class="dashboard-preview">
+      <aside class="preview-sidebar">
+        <span class="preview-brand">{{ logo() }}</span>
+        <i class="is-active">{{ icon('home') }}<b>Accueil</b></i>
+        <i>{{ icon('classes') }}<b>Classes</b></i>
+        <i>{{ icon('document') }}<b>Devoirs</b></i>
+        <i>{{ icon('upload') }}<b>Remises</b></i>
+        <i>{{ icon('chart') }}<b>Progression</b></i>
+      </aside>
+      <div class="preview-main">
+        <div class="preview-toolbar"><span></span><span></span><span></span><b>ClasseXP</b></div>
+        <h2>Bonjour ! <span>👋</span></h2>
+        <p>Une nouvelle journée pour apprendre et progresser.</p>
+        <div class="preview-stat-grid"><i><b>3</b><small>Classes</small></i><i><b>12</b><small>Devoirs</small></i><i><b>28</b><small>Remises</small></i><i><b>85%</b><small>Réussite</small></i></div>
+        <div class="preview-columns">
+          <section><strong>Mes classes</strong><div><i></i><span><b>3e A</b><small>28 élèves</small></span></div><div><i></i><span><b>4e B</b><small>25 élèves</small></span></div></section>
+          <section><strong>Devoirs récents</strong><div><i></i><span><b>Exercice sur les fractions</b><small>À corriger</small></span></div><div><i></i><span><b>Mon environnement</b><small>18/28 remis</small></span></div></section>
+        </div>
+      </div>
     </div>
-    <div class="floating-card floating-card-time"><span>Temps restant</span><strong>00:42:18</strong></div>
-    <div class="floating-card floating-card-score"><span>Progression</span><strong>17 <small>/ 20</small></strong></div>
   </div>
 </section>
-<section class="features" aria-labelledby="features-title">
-  <div class="section-heading"><p class="eyebrow">Tout au même endroit</p><h2 id="features-title">Une classe fluide, du cours à la copie.</h2></div>
+
+<section class="landing-features" id="fonctionnalites" aria-labelledby="features-title">
+  <div class="sr-only"><h2 id="features-title">Fonctionnalités ClasseXP</h2></div>
   <div class="feature-grid">
-    <article class="feature-card"><span class="feature-icon" aria-hidden="true">▦</span><h3>Classes</h3><p>Rejoignez ou organisez vos groupes avec un simple code d’invitation.</p></article>
-    <article class="feature-card"><span class="feature-icon" aria-hidden="true">✎</span><h3>Devoirs</h3><p>Planifiez les sujets et retrouvez les échéances sans perdre le fil.</p></article>
-    <article class="feature-card"><span class="feature-icon" aria-hidden="true">⇧</span><h3>Remises</h3><p>Déposez et consultez les copies dans un espace fiable et lisible.</p></article>
-    <article class="feature-card"><span class="feature-icon" aria-hidden="true">↗</span><h3>Progression</h3><p>Accédez aux notes et commentaires dès qu’ils sont disponibles.</p></article>
+    <article class="feature-card"><span class="feature-icon feature-blue">{{ icon('classes') }}</span><div><h3>Classes</h3><p>Organisez vos groupes, partagez un code et centralisez les informations.</p></div></article>
+    <article class="feature-card"><span class="feature-icon feature-violet">{{ icon('document') }}</span><div><h3>Devoirs</h3><p>Créez et planifiez des évaluations avec des consignes claires.</p></div></article>
+    <article class="feature-card"><span class="feature-icon feature-green">{{ icon('upload') }}</span><div><h3>Remises</h3><p>Recevez les copies des élèves et gardez une vision claire des statuts.</p></div></article>
+    <article class="feature-card"><span class="feature-icon feature-indigo">{{ icon('chart') }}</span><div><h3>Progression</h3><p>Suivez les notes publiées et accompagnez chaque élève.</p></div></article>
   </div>
 </section>
 {% endblock %}

@@ -62,6 +62,18 @@ def ensure_db_initialized():
 ensure_db_initialized()
 
 
+@app.context_processor
+def inject_navigation_context():
+    """Expose the signed-in user to the shared application shell."""
+    utilisateur_id = session.get('utilisateur_id')
+    if utilisateur_id is None:
+        return {}
+    utilisateur = get_db().execute(
+        'SELECT nom, email, role FROM utilisateurs WHERE id = ?', (utilisateur_id,)
+    ).fetchone()
+    return {'nav_utilisateur': utilisateur, 'nav_role': session.get('role')}
+
+
 @app.cli.command('init-db')
 def init_db_command():
     """Efface les donnees existantes et cree les tables."""
@@ -168,6 +180,7 @@ def dashboard_eleve():
     ).fetchone()
     devoirs = get_db().execute(
           '''SELECT d.*, c.nom AS classe_nom, s.note, s.commentaire,
+                        s.statut, s.heure_debut, s.heure_fin, s.fichier_copie,
                         EXISTS(SELECT 1 FROM sessions_examen sx WHERE sx.devoir_id = d.id AND sx.eleve_id = ?) AS commence
            FROM devoirs d
            JOIN classes c ON c.id = d.classe_id
@@ -181,7 +194,13 @@ def dashboard_eleve():
         'SELECT c.nom, c.code FROM classes c JOIN classe_eleves ce ON ce.classe_id = c.id WHERE ce.eleve_id = ?',
         (session['utilisateur_id'],),
     ).fetchall()
-    return render_template('dashboard.html', utilisateur=utilisateur, role='ELEVE', devoirs=devoirs, classes=classes)
+    devoirs_en_cours = sum(1 for devoir in devoirs if devoir['statut'] == 'EN_COURS')
+    notes = [devoir['note'] for devoir in devoirs if devoir['note'] is not None]
+    moyenne = round(sum(notes) / len(notes), 1) if notes else None
+    return render_template(
+        'dashboard.html', utilisateur=utilisateur, role='ELEVE', devoirs=devoirs,
+        classes=classes, devoirs_en_cours=devoirs_en_cours, moyenne=moyenne,
+    )
 
 
 @app.get('/professeur')
@@ -199,13 +218,17 @@ def dashboard_professeur():
     ).fetchall()
     devoirs = db.execute(
         '''SELECT d.*, c.nom AS classe_nom,
-                  COUNT(s.id) AS copies
+                  COUNT(CASE WHEN s.fichier_copie IS NOT NULL THEN 1 END) AS copies,
+                  COUNT(CASE WHEN s.fichier_copie IS NOT NULL AND s.note IS NULL THEN 1 END) AS a_corriger
            FROM devoirs d JOIN classes c ON c.id = d.classe_id
            LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.fichier_copie IS NOT NULL
            WHERE d.professeur_id = ? GROUP BY d.id ORDER BY d.date_ouverture DESC''',
         (session['utilisateur_id'],),
     ).fetchall()
-    return render_template('dashboard.html', utilisateur=utilisateur, role='PROFESSEUR', classes=classes, devoirs=devoirs)
+    return render_template(
+        'dashboard.html', utilisateur=utilisateur, role='PROFESSEUR',
+        classes=classes, devoirs=devoirs,
+    )
 
 
 @app.route('/professeur/classe/nouvelle', methods=['GET', 'POST'])

@@ -42,17 +42,20 @@ def create_class(client, name="Classe Test"):
     return row["id"], row["code"]
 
 
-def create_assignment(client, class_id, *, opening=None, duration="3600", filename="sujet.pdf"):
+def create_assignment(
+    client, class_id, *, opening=None, duration="3600", filename="sujet.pdf",
+    title="Contrôle de fonctions", content=b"PDF",
+):
     opening = opening or (utc_now() - timedelta(minutes=1)).isoformat(timespec="minutes")
     return client.post(
         "/professeur/devoir/nouveau",
         data={
-            "titre": "Contrôle de fonctions",
+            "titre": title,
             "description": "Sujet de test",
             "classe_id": str(class_id),
             "date_ouverture": opening,
             "duree": duration,
-            "sujet": (pytest.importorskip("io").BytesIO(b"PDF"), filename),
+            "sujet": (pytest.importorskip("io").BytesIO(content), filename),
         },
         content_type="multipart/form-data",
     )
@@ -121,8 +124,10 @@ def test_assignment_creation_upload_and_duration(professor, app):
             "SELECT titre, duree, sujet_pdf, date_ouverture FROM devoirs ORDER BY id DESC LIMIT 1"
         ).fetchone()
     assert row["duree"] == 18000
-    assert row["sujet_pdf"] == "Sujet.PDF"
-    assert Path(app.config["UPLOAD_FOLDER"], "sujets", "Sujet.PDF").exists()
+    assert row["sujet_pdf"] != "Sujet.PDF"
+    assert row["sujet_pdf"].endswith(".pdf")
+    assert len(row["sujet_pdf"]) == 36
+    assert Path(app.config["UPLOAD_FOLDER"], "sujets", row["sujet_pdf"]).exists()
 
 
 def test_assignment_rejects_invalid_file_and_missing_file(professor):
@@ -196,9 +201,52 @@ def test_student_submission_and_teacher_copies(professor, student, app, file_fac
         content_type="multipart/form-data",
     )
     assert response.status_code == 302
+    with app.app_context():
+        stored_copy = application_module.get_db().execute(
+            "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
+        ).fetchone()["fichier_copie"]
+    assert stored_copy.endswith(".pdf")
+    assert len(stored_copy) == 36
+    assert Path(app.config["UPLOAD_FOLDER"], "copies", str(assignment_id), stored_copy).exists()
     copies = professor["client"].get(f"/professeur/devoir/{assignment_id}/copies")
     assert copies.status_code == 200 and b"Remise" in copies.data
     assert b".." not in copies.data
+
+
+def test_repeated_copy_names_receive_distinct_storage_names(professor, student, app, file_factory):
+    class_id, code = create_class(professor["client"])
+    student["client"].post("/eleve/classe/rejoindre", data={"code": code})
+    create_assignment(professor["client"], class_id)
+    with app.app_context():
+        assignment_id = application_module.get_db().execute(
+            "SELECT id FROM devoirs ORDER BY id DESC LIMIT 1"
+        ).fetchone()["id"]
+    student["client"].post(f"/devoir/{assignment_id}/commencer")
+
+    student["client"].post(
+        "/rendre_copie",
+        data={"devoir_id": str(assignment_id), **file_factory("copie.pdf", b"premiere")},
+        content_type="multipart/form-data",
+    )
+    with app.app_context():
+        first_name = application_module.get_db().execute(
+            "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
+        ).fetchone()["fichier_copie"]
+
+    student["client"].post(
+        "/rendre_copie",
+        data={"devoir_id": str(assignment_id), **file_factory("copie.pdf", b"seconde")},
+        content_type="multipart/form-data",
+    )
+    with app.app_context():
+        second_name = application_module.get_db().execute(
+            "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
+        ).fetchone()["fichier_copie"]
+
+    copy_folder = Path(app.config["UPLOAD_FOLDER"], "copies", str(assignment_id))
+    assert first_name != second_name
+    assert (copy_folder / first_name).read_bytes() == b"premiere"
+    assert (copy_folder / second_name).read_bytes() == b"seconde"
 
 
 def test_upload_types_and_download_path_security(professor, student, app):
@@ -250,7 +298,11 @@ def test_uploaded_files_are_limited_to_authorized_users(professor, student, app,
             "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
         ).fetchone()["fichier_copie"]
 
-    subject_path = "/uploads/sujets/sujet-prive.pdf"
+    with app.app_context():
+        subject_name = application_module.get_db().execute(
+            "SELECT sujet_pdf FROM devoirs WHERE id = ?", (assignment_id,)
+        ).fetchone()["sujet_pdf"]
+    subject_path = f"/uploads/sujets/{subject_name}"
     copy_path = f"/uploads/copies/{assignment_id}/{copy_name}"
     assert response_status(professor["client"], subject_path) == 200
     assert response_status(student["client"], subject_path) == 200
@@ -263,3 +315,43 @@ def test_uploaded_files_are_limited_to_authorized_users(professor, student, app,
     assert response_status(stranger, subject_path) == 403
     assert response_status(stranger, copy_path) == 403
     assert response_status(app.test_client(), copy_path) == 302
+
+
+def test_identical_subject_names_never_overwrite_each_other(professor, app):
+    professor_a = professor["client"]
+    class_a, _ = create_class(professor_a, "Classe A")
+
+    professor_b = app.test_client()
+    email_b, _ = register(professor_b, name="ProfB", role="PROFESSEUR")
+    login(professor_b, email_b)
+    class_b, _ = create_class(professor_b, "Classe B")
+
+    create_assignment(
+        professor_a, class_a, filename="controle.pdf", title="Sujet A", content=b"contenu-A",
+    )
+    create_assignment(
+        professor_b, class_b, filename="controle.pdf", title="Sujet B", content=b"contenu-B",
+    )
+    create_assignment(
+        professor_a, class_a, filename="controle.pdf", title="Sujet A bis", content=b"contenu-A-bis",
+    )
+
+    with app.app_context():
+        rows = application_module.get_db().execute(
+            "SELECT titre, sujet_pdf FROM devoirs ORDER BY id"
+        ).fetchall()
+    stored_names = [row["sujet_pdf"] for row in rows]
+    assert len(set(stored_names)) == 3
+    assert all(name.endswith(".pdf") and len(name) == 36 for name in stored_names)
+
+    subject_folder = Path(app.config["UPLOAD_FOLDER"], "sujets")
+    assert (subject_folder / rows[0]["sujet_pdf"]).read_bytes() == b"contenu-A"
+    assert (subject_folder / rows[1]["sujet_pdf"]).read_bytes() == b"contenu-B"
+    assert (subject_folder / rows[2]["sujet_pdf"]).read_bytes() == b"contenu-A-bis"
+
+    path_a = f'/uploads/sujets/{rows[0]["sujet_pdf"]}'
+    path_b = f'/uploads/sujets/{rows[1]["sujet_pdf"]}'
+    assert response_status(professor_a, path_a) == 200
+    assert response_status(professor_b, path_b) == 200
+    assert response_status(professor_a, path_b) == 403
+    assert response_status(professor_b, path_a) == 403

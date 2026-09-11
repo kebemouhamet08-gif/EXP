@@ -1,6 +1,7 @@
 import os
 import secrets
 import sqlite3
+import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -270,14 +271,14 @@ def nouveau_devoir():
         duree = request.form.get('duree', type=int)
         ouverture = request.form.get('date_ouverture', '').strip()
         sujet = request.files.get('sujet')
+        nom_sujet = nom_stockage_unique(sujet.filename) if sujet is not None else None
         classe = db.execute('SELECT id FROM classes WHERE id = ? AND professeur_id = ?', (classe_id, session['utilisateur_id'])).fetchone()
-        if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or not extension_autorisee(sujet.filename):
+        if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or nom_sujet is None:
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Tous les champs sont obligatoires. La duree minimale est de 60 secondes.')
         try:
             datetime.fromisoformat(ouverture)
         except ValueError:
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Date d’ouverture invalide.')
-        nom_sujet = secure_filename(sujet.filename)
         dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'sujets')
         os.makedirs(dossier, exist_ok=True)
         sujet.save(os.path.join(dossier, nom_sujet))
@@ -382,6 +383,15 @@ def extension_autorisee(nom_fichier):
     return '.' in nom_fichier and nom_fichier.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def nom_stockage_unique(nom_original):
+    """Build an opaque storage name from a sanitized, allowed extension."""
+    nom_securise = secure_filename(nom_original)
+    if not extension_autorisee(nom_securise):
+        return None
+    extension = nom_securise.rsplit('.', 1)[1].lower()
+    return f'{uuid.uuid4().hex}.{extension}'
+
+
 @app.post('/rendre_copie')
 @connexion_requise
 def rendre_copie():
@@ -401,13 +411,12 @@ def rendre_copie():
     copie = request.files.get('copie')
     if copie is None or not copie.filename:
         return 'Aucun fichier selectionne.', 400
-    if not extension_autorisee(copie.filename):
+    nom_fichier = nom_stockage_unique(copie.filename)
+    if nom_fichier is None:
         return 'Format non autorise. Utilisez un PDF, JPG ou PNG.', 400
 
     dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'copies', str(devoir_id))
     os.makedirs(dossier, exist_ok=True)
-    nom_fichier = secure_filename(copie.filename)
-    nom_fichier = f"{session['utilisateur_id']}_{nom_fichier}"
     copie.save(os.path.join(dossier, nom_fichier))
     get_db().execute(
         "UPDATE sessions_examen SET fichier_copie = ?, heure_fin = ?, statut = 'TERMINE' WHERE id = ?",

@@ -2,11 +2,23 @@
   const sidebar = document.querySelector('[data-sidebar]');
   const backdrop = document.querySelector('[data-sidebar-backdrop]');
   const menuToggle = document.querySelector('[data-menu-toggle]');
+  const toast = document.querySelector('[data-toast]');
+
+  let toastTimeout;
+  const showToast = (message) => {
+    if (!toast) return;
+    window.clearTimeout(toastTimeout);
+    toast.textContent = message;
+    toast.classList.add('is-visible');
+    toastTimeout = window.setTimeout(() => toast.classList.remove('is-visible'), 1600);
+  };
 
   const setMenuState = (open) => {
     sidebar?.classList.toggle('is-open', open);
     backdrop?.classList.toggle('is-visible', open);
     menuToggle?.setAttribute('aria-expanded', String(open));
+    menuToggle?.setAttribute('aria-label', open ? 'Fermer la navigation' : 'Ouvrir la navigation');
+    document.body.classList.toggle('menu-open', open);
   };
 
   menuToggle?.addEventListener('click', () => {
@@ -14,6 +26,9 @@
   });
   backdrop?.addEventListener('click', () => setMenuState(false));
   sidebar?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setMenuState(false)));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setMenuState(false);
+  });
 
   document.querySelectorAll('[data-password-toggle]').forEach((toggle) => {
     toggle.addEventListener('click', () => {
@@ -30,12 +45,22 @@
     button.addEventListener('click', async () => {
       const value = button.dataset.copy || '';
       try {
-        await navigator.clipboard.writeText(value);
-        const original = button.textContent;
-        button.textContent = 'Copié';
-        window.setTimeout(() => { button.textContent = original; }, 1400);
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+        } else {
+          const helper = document.createElement('textarea');
+          helper.value = value;
+          helper.setAttribute('readonly', '');
+          helper.style.position = 'fixed';
+          helper.style.opacity = '0';
+          document.body.appendChild(helper);
+          helper.select();
+          document.execCommand('copy');
+          helper.remove();
+        }
+        showToast('Code copié');
       } catch {
-        button.textContent = value;
+        showToast(`Code : ${value}`);
       }
     });
   });
@@ -102,10 +127,12 @@
     const timer = exam.querySelector('[data-countdown]');
     const timerCard = exam.querySelector('[data-timer-card]');
     const status = exam.querySelector('[data-timer-status]');
-    let remaining = Number(exam.dataset.remaining || 0);
+    const initialRemaining = Math.max(0, Number(exam.dataset.remaining || 0));
+    const deadline = Date.now() + (initialRemaining * 1000);
+    const submitButton = exam.querySelector('[data-submit-button]');
 
     const tick = () => {
-      const safeRemaining = Math.max(0, remaining);
+      const safeRemaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       const hours = String(Math.floor(safeRemaining / 3600)).padStart(2, '0');
       const minutes = String(Math.floor((safeRemaining % 3600) / 60)).padStart(2, '0');
       const seconds = String(safeRemaining % 60).padStart(2, '0');
@@ -113,11 +140,19 @@
       timerCard?.classList.toggle('is-warning', safeRemaining <= 600 && safeRemaining > 300);
       timerCard?.classList.toggle('is-danger', safeRemaining <= 300);
       if (status) status.textContent = safeRemaining ? 'L’épreuve est en cours' : 'Le temps est écoulé';
-      if (remaining > 0) {
-        remaining -= 1;
+      if (submitButton) submitButton.disabled = safeRemaining === 0;
+      if (safeRemaining > 0) {
         window.setTimeout(tick, 1000);
       }
     };
     tick();
   }
+
+  document.querySelectorAll('[data-current-date]').forEach((element) => {
+    const now = new Date();
+    element.dateTime = now.toISOString().slice(0, 10);
+    element.textContent = now.toLocaleDateString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
+  });
 })();

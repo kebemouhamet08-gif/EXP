@@ -2,7 +2,7 @@
 {% block title %}Copies · {{ devoir['titre'] }} · ClasseXP{% endblock %}
 {% block content %}
 <a class="back-link" href="{{ url_for('dashboard_professeur') }}"><span aria-hidden="true">←</span> Retour au tableau de bord</a>
-<div class="page-heading"><div><p class="eyebrow">Remises des élèves</p><h1>{{ devoir['titre'] }}</h1><p>{{ copies|length }} session{{ 's' if copies|length != 1 }} enregistrée{{ 's' if copies|length != 1 }} pour ce devoir.</p></div><span class="badge badge-neutral badge-large">{{ copies|selectattr('fichier_copie')|list|length }} copie{{ 's' if copies|selectattr('fichier_copie')|list|length != 1 }} remise{{ 's' if copies|selectattr('fichier_copie')|list|length != 1 }}</span></div>
+<div class="page-header"><div><p class="eyebrow">Devoir · {{ devoir['titre'] }}</p><h1>Copies reçues</h1><p>{{ copies|length }} session{{ 's' if copies|length != 1 }} enregistrée{{ 's' if copies|length != 1 }} pour ce devoir.</p></div><span class="badge badge-neutral badge-large">{{ copies|selectattr('fichier_copie')|list|length }} copie{{ 's' if copies|selectattr('fichier_copie')|list|length != 1 }} remise{{ 's' if copies|selectattr('fichier_copie')|list|length != 1 }}</span></div>
 {% if copies %}<div class="submission-list">{% for copie in copies %}
 <article class="card submission-card">
   <div class="submission-student"><span class="avatar avatar-large" aria-hidden="true">{{ copie['eleve_nom'][0]|upper }}</span><div><h2>{{ copie['eleve_nom'] }}</h2><p>{{ copie['eleve_email'] }}</p></div></div>

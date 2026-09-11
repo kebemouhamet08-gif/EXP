@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% set is_login = mode == 'connexion' %}
 {% block title %}{{ 'Connexion' if is_login else 'Inscription' }} · ClasseXP{% endblock %}
 {% block public_content %}
@@ -7,7 +8,8 @@
     <p class="eyebrow"><span></span> Votre espace ClasseXP</p>
     <h1>{{ 'Heureux de vous revoir.' if is_login else 'Votre progression commence ici.' }}</h1>
     <p>{{ 'Retrouvez vos classes, vos devoirs et vos résultats en quelques secondes.' if is_login else 'Créez votre espace élève ou professeur et rejoignez une communauté tournée vers la réussite.' }}</p>
-    <div class="auth-benefits" aria-hidden="true"><span>✓ Données centralisées</span><span>✓ Parcours simple</span><span>✓ Expérience sécurisée</span></div>
+    <div class="auth-illustration" aria-hidden="true"><div class="auth-orbit"></div><div class="auth-mini-card"><span>{{ icon('classes') }}</span><div><strong>Votre classe, partout</strong><small>Simple, claire et connectée</small></div></div></div>
+    <div class="auth-benefits"><span>✓ Données centralisées</span><span>✓ Parcours simple</span><span>✓ Expérience sécurisée</span></div>
   </div>
   <div class="card auth-card">
     <div class="auth-card-heading">
@@ -19,7 +21,7 @@
     <form method="post" class="form-stack">
       {% if not is_login %}
       <div class="form-field"><label class="form-label" for="nom">Nom complet</label><input class="form-input" id="nom" name="nom" autocomplete="name" required placeholder="Ex. Camille Martin"></div>
-      <div class="form-field"><label class="form-label" for="role">Je suis</label><select class="form-input" id="role" name="role"><option value="ELEVE">Élève</option><option value="PROFESSEUR">Professeur</option></select></div>
+      <fieldset class="form-field role-field"><legend class="form-label">Je suis</legend><div class="role-options"><label><input type="radio" name="role" value="ELEVE" checked><span>{{ icon('document') }} Élève</span></label><label><input type="radio" name="role" value="PROFESSEUR"><span>{{ icon('classes') }} Professeur</span></label></div></fieldset>
       {% endif %}
       <div class="form-field"><label class="form-label" for="email">Adresse e-mail</label><input class="form-input" id="email" type="email" name="email" autocomplete="email" required placeholder="vous@exemple.fr"></div>
       <div class="form-field"><label class="form-label" for="mot_de_passe">Mot de passe</label><div class="password-field"><input class="form-input" id="mot_de_passe" type="password" name="mot_de_passe" autocomplete="{{ 'current-password' if is_login else 'new-password' }}" minlength="8" required placeholder="8 caractères minimum"><button class="password-toggle" type="button" data-password-toggle aria-label="Afficher le mot de passe" aria-pressed="false"><span aria-hidden="true">◉</span></button></div></div>

@@ -186,13 +186,25 @@ def test_student_assignment_lifecycle_and_expiration(professor, student, app):
     with app.app_context():
         application_module.get_db().execute("UPDATE sessions_examen SET heure_debut = ?", ((utc_now() - timedelta(minutes=2)).isoformat(),))
         application_module.get_db().commit()
+    grace_page = client.get(f"/devoir/{assignment_id}")
+    assert b"D\xc3\xa9lai de remise" in grace_page.data
     response = client.post(
         "/rendre_copie",
         data={"devoir_id": str(assignment_id), "copie": (pytest.importorskip("io").BytesIO(b"x"), "copy.pdf")},
         content_type="multipart/form-data", follow_redirects=True,
     )
     assert response.status_code == 200
-    assert b"Le temps est" in response.data
+    assert b"Copie envoy" in response.data
+    with app.app_context():
+        application_module.get_db().execute("UPDATE sessions_examen SET heure_debut = ?", ((utc_now() - timedelta(minutes=7)).isoformat(),))
+        application_module.get_db().commit()
+    response = client.post(
+        "/rendre_copie",
+        data={"devoir_id": str(assignment_id), "copie": (pytest.importorskip("io").BytesIO(b"y"), "late.pdf")},
+        content_type="multipart/form-data", follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"d\xc3\xa9lai de remise de 5 minutes est" in response.data
 
 
 def test_student_submission_and_teacher_copies(professor, student, app, file_factory):
@@ -293,7 +305,7 @@ def test_ui_shell_and_static_assets(client):
         assert javascript.mimetype == "text/javascript"
         assert b"toast--success" in css.data
         assert b"data-toast-close" in javascript.data
-        assert b"moins de 5 minutes" in javascript.data
+        assert b"Vous avez 5 minutes" in javascript.data
     finally:
         css.close()
         javascript.close()

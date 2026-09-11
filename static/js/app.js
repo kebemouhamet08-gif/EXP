@@ -171,29 +171,40 @@
     const completed = exam.dataset.completed === 'true';
     const timer = exam.querySelector('[data-countdown]');
     const timerCard = exam.querySelector('[data-timer-card]');
+    const timerLabel = exam.querySelector('[data-timer-label]');
     const status = exam.querySelector('[data-timer-status]');
-    const initialRemaining = Math.max(0, Number(exam.dataset.remaining || 0));
-    const deadline = Date.now() + (initialRemaining * 1000);
+    const initialWorkRemaining = Math.max(0, Number(exam.dataset.workRemaining || 0));
+    const initialSubmitRemaining = Math.max(0, Number(exam.dataset.submitRemaining || 0));
+    const workDeadline = Date.now() + (initialWorkRemaining * 1000);
+    const submitDeadline = Date.now() + (initialSubmitRemaining * 1000);
     const submitButton = exam.querySelector('[data-submit-button]');
-    let deadlineWarningShown = false;
+    let graceWarningShown = false;
 
     const tick = () => {
-      const safeRemaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      const workRemaining = Math.max(0, Math.ceil((workDeadline - Date.now()) / 1000));
+      const submitRemaining = Math.max(0, Math.ceil((submitDeadline - Date.now()) / 1000));
+      const graceActive = workRemaining === 0 && submitRemaining > 0;
+      const safeRemaining = graceActive ? submitRemaining : workRemaining;
       const hours = String(Math.floor(safeRemaining / 3600)).padStart(2, '0');
       const minutes = String(Math.floor((safeRemaining % 3600) / 60)).padStart(2, '0');
       const seconds = String(safeRemaining % 60).padStart(2, '0');
       if (timer) timer.textContent = `${hours}:${minutes}:${seconds}`;
       if (!completed) {
-        timerCard?.classList.toggle('is-warning', safeRemaining <= 600 && safeRemaining > 300);
-        timerCard?.classList.toggle('is-danger', safeRemaining <= 300);
-        if (status) status.textContent = safeRemaining ? 'L’épreuve est en cours' : 'Le temps est écoulé';
-        if (!deadlineWarningShown && safeRemaining > 0 && safeRemaining <= 300) {
-          showToast('Il vous reste moins de 5 minutes pour envoyer votre copie.', 'warning');
-          deadlineWarningShown = true;
+        timerCard?.classList.toggle('is-warning', workRemaining > 0 && workRemaining <= 300);
+        timerCard?.classList.toggle('is-danger', graceActive || submitRemaining === 0);
+        if (timerLabel) timerLabel.textContent = graceActive ? 'Délai de remise' : 'Temps restant';
+        if (status) {
+          status.textContent = graceActive
+            ? 'Rendez votre copie maintenant'
+            : (submitRemaining > 0 ? 'L’épreuve est en cours' : 'Délai de remise écoulé');
+        }
+        if (!graceWarningShown && graceActive) {
+          showToast('Le devoir est terminé. Vous avez 5 minutes pour rendre votre copie.', 'warning');
+          graceWarningShown = true;
         }
       }
-      if (submitButton) submitButton.disabled = safeRemaining === 0;
-      if (safeRemaining > 0) {
+      if (submitButton) submitButton.disabled = submitRemaining === 0;
+      if (submitRemaining > 0) {
         window.setTimeout(tick, 1000);
       }
     };

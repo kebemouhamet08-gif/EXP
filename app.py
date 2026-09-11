@@ -45,6 +45,7 @@ app.config['MICROSOFT_CLIENT_ID'] = os.environ.get('MICROSOFT_CLIENT_ID')
 app.config['MICROSOFT_CLIENT_SECRET'] = os.environ.get('MICROSOFT_CLIENT_SECRET')
 app.config['MICROSOFT_TENANT'] = os.environ.get('MICROSOFT_TENANT', 'common')
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'png', 'docx'}
+SUBMISSION_GRACE_SECONDS = 5 * 60
 
 PROVIDERS = {
     'google': {'label': 'Google', 'oidc': True},
@@ -905,9 +906,15 @@ def voir_devoir(devoir_id):
     ).fetchone()
     if examen is None:
         return redirect(url_for('dashboard_eleve'))
-    fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
-    restant = max(0, int((fin - utc_now()).total_seconds()))
-    return render_template('devoir.html', devoir=devoir, restant=restant, examen=examen)
+    fin_travail = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
+    fin_remise = fin_travail + timedelta(seconds=SUBMISSION_GRACE_SECONDS)
+    maintenant = utc_now()
+    restant = max(0, int((fin_travail - maintenant).total_seconds()))
+    remise_restant = max(0, int((fin_remise - maintenant).total_seconds()))
+    return render_template(
+        'devoir.html', devoir=devoir, restant=restant,
+        remise_restant=remise_restant, examen=examen,
+    )
 
 
 def extension_autorisee(nom_fichier):
@@ -937,9 +944,10 @@ def rendre_copie():
     ).fetchone()
     if devoir is None or examen is None:
         return 'Session invalide.', 403
-    fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
-    if utc_now() >= fin:
-        flash("Le temps est écoulé. La copie n'a pas été envoyée.", 'warning')
+    fin_travail = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
+    fin_remise = fin_travail + timedelta(seconds=SUBMISSION_GRACE_SECONDS)
+    if utc_now() >= fin_remise:
+        flash("Le délai de remise de 5 minutes est écoulé. La copie n'a pas été envoyée.", 'warning')
         return redirect(url_for('dashboard_eleve'))
     copie = request.files.get('copie')
     if copie is None or not copie.filename:

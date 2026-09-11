@@ -1,10 +1,34 @@
 {% extends "base.html" %}
-{% block title %}Accueil · ClasseXP{% endblock %}
-{% block content %}
-<section class="hero">
-  <p class="eyebrow">Apprendre, progresser, réussir</p>
-  <h1>La classe continue, simplement.</h1>
-  <p>ClasseXP réunira les classes, les devoirs, les remises et la progression dans un espace clair.</p>
-  <a class="button" href="{{ url_for('pages.login') }}">Se connecter</a>
+{% block title %}ClasseXP · Apprendre, progresser, réussir{% endblock %}
+{% block public_content %}
+<section class="landing" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <p class="eyebrow"><span></span> L’espace de travail de votre classe</p>
+    <h1 id="hero-title">Apprendre, progresser, <span class="gradient-text">réussir.</span></h1>
+    <p class="hero-lead">Classes, devoirs et remises réunis dans une expérience claire, pour que chacun reste concentré sur l’essentiel.</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="{{ url_for('pages.login') if request.endpoint and request.endpoint.startswith('pages.') else url_for('connexion') }}">Se connecter <span aria-hidden="true">→</span></a>
+      {% if not (request.endpoint and request.endpoint.startswith('pages.')) %}<a class="button button-secondary" href="{{ url_for('inscription') }}">Créer un compte</a>{% endif %}
+    </div>
+    <p class="trust-line"><span aria-hidden="true">✓</span> Simple pour les élèves, efficace pour les professeurs</p>
+  </div>
+  <div class="hero-visual" aria-hidden="true">
+    <div class="visual-glow"></div>
+    <div class="preview-window">
+      <div class="preview-top"><i></i><i></i><i></i><span>ClasseXP</span></div>
+      <div class="preview-body"><div class="preview-sidebar"><b></b><b></b><b></b><b></b></div><div class="preview-content"><span class="preview-label">Bonjour Camille</span><strong>Votre prochain devoir</strong><div class="preview-card"><span>Mathématiques</span><em>Disponible</em><b></b><b></b></div><div class="preview-stats"><span></span><span></span><span></span></div></div></div>
+    </div>
+    <div class="floating-card floating-card-time"><span>Temps restant</span><strong>00:42:18</strong></div>
+    <div class="floating-card floating-card-score"><span>Progression</span><strong>17 <small>/ 20</small></strong></div>
+  </div>
+</section>
+<section class="features" aria-labelledby="features-title">
+  <div class="section-heading"><p class="eyebrow">Tout au même endroit</p><h2 id="features-title">Une classe fluide, du cours à la copie.</h2></div>
+  <div class="feature-grid">
+    <article class="feature-card"><span class="feature-icon" aria-hidden="true">▦</span><h3>Classes</h3><p>Rejoignez ou organisez vos groupes avec un simple code d’invitation.</p></article>
+    <article class="feature-card"><span class="feature-icon" aria-hidden="true">✎</span><h3>Devoirs</h3><p>Planifiez les sujets et retrouvez les échéances sans perdre le fil.</p></article>
+    <article class="feature-card"><span class="feature-icon" aria-hidden="true">⇧</span><h3>Remises</h3><p>Déposez et consultez les copies dans un espace fiable et lisible.</p></article>
+    <article class="feature-card"><span class="feature-icon" aria-hidden="true">↗</span><h3>Progression</h3><p>Accédez aux notes et commentaires dès qu’ils sont disponibles.</p></article>
+  </div>
 </section>
 {% endblock %}

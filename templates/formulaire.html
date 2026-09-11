@@ -1,43 +1,23 @@
-<!doctype html>
-<html lang="fr">
-<head>
-    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ClasseXP - Formulaire</title>
-    <style>
-        body { font-family: system-ui, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; }
-        main { width: min(92vw, 600px); margin: 3rem auto; background: #313244; padding: 2rem; border-radius: 12px; }
-        label { display: block; margin-top: 1rem; } input, select, textarea, button { box-sizing: border-box; width: 100%; padding: .7rem; margin-top: .35rem; border-radius: 6px; border: 1px solid #585b70; }
-        button { background: #a6e3a1; border: 0; margin-top: 1.5rem; font-weight: bold; cursor: pointer; } a { color: #89b4fa; } .error { color: #f38ba8; }
-    </style>
-</head>
-<body><main>
-    <p><a href="{{ url_for('dashboard_professeur') }}">Retour au tableau de bord</a></p>
-    {% if type_formulaire == 'classe' %}
-    <h1>Créer une classe</h1>
-    {% if error %}<p class="error">{{ error }}</p>{% endif %}
-    <form method="post"><label>Nom de la classe<input name="nom" required></label><button type="submit">Créer la classe</button></form>
-    {% else %}
-    <h1>Créer un devoir</h1>
-    {% if error %}<p class="error">{{ error }}</p>{% endif %}
-    <form method="post" enctype="multipart/form-data">
-        <label>Titre<input name="titre" required></label><label>Description<textarea name="description" rows="4"></textarea></label>
-        <label>Classe<select name="classe_id" required>{% for classe in classes %}<option value="{{ classe['id'] }}">{{ classe['nom'] }}</option>{% endfor %}</select></label>
-        <label>Ouverture<input type="datetime-local" name="date_ouverture" required></label>
-        <label>Durée du devoir
-            <select name="duree" required>
-                <option value="60">1 minute</option>
-                <option value="300">5 minutes</option>
-                <option value="600">10 minutes</option>
-                <option value="1800">30 minutes</option>
-                <option value="3600" selected>1 heure</option>
-                <option value="7200">2 heures</option>
-                <option value="10800">3 heures</option>
-                <option value="14400">4 heures</option>
-                <option value="18000">5 heures</option>
-            </select>
-        </label>
-        <label>Sujet<input type="file" name="sujet" accept=".pdf,.docx,.jpg,.png" required></label><button type="submit">Publier le devoir</button>
-    </form>
-    {% endif %}
-</main></body>
-</html>
+{% extends "base.html" %}
+{% block title %}{{ 'Créer une classe' if type_formulaire == 'classe' else 'Créer un devoir' }} · ClasseXP{% endblock %}
+{% block content %}
+<a class="back-link" href="{{ url_for('dashboard_professeur') }}"><span aria-hidden="true">←</span> Retour au tableau de bord</a>
+<div class="form-page-heading"><p class="eyebrow">{{ 'Organisation' if type_formulaire == 'classe' else 'Publication' }}</p><h1>{{ 'Créer une classe' if type_formulaire == 'classe' else 'Créer un devoir' }}</h1><p>{{ 'Donnez un nom clair à votre groupe. Un code d’invitation sera généré automatiquement.' if type_formulaire == 'classe' else 'Préparez les informations, la planification et le sujet de votre évaluation.' }}</p></div>
+{% if error %}<div class="alert alert-error form-alert" role="alert"><span aria-hidden="true">!</span><p>{{ error }}</p></div>{% endif %}
+
+{% if type_formulaire == 'classe' %}
+<section class="panel form-panel narrow-panel">
+  <form method="post" class="form-stack">
+    <div class="form-field"><label class="form-label" for="nom">Nom de la classe</label><input class="form-input form-input-large" id="nom" name="nom" required autocomplete="off" placeholder="Ex. Mathématiques · Terminale A"><p class="form-help">Utilisez un nom reconnaissable par vos élèves.</p></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('dashboard_professeur') }}">Annuler</a><button class="button button-primary" type="submit">Créer la classe <span aria-hidden="true">→</span></button></div>
+  </form>
+</section>
+{% else %}
+<form method="post" enctype="multipart/form-data" class="assignment-form" data-assignment-form>
+  <section class="panel form-section"><div class="form-step"><span>1</span><div><h2>Informations</h2><p>Présentez clairement le travail attendu.</p></div></div><div class="form-grid"><div class="form-field form-field-wide"><label class="form-label" for="titre">Titre</label><input class="form-input" id="titre" name="titre" required placeholder="Ex. Contrôle : fonctions" data-summary-title></div><div class="form-field form-field-wide"><label class="form-label" for="description">Description <span>(facultatif)</span></label><textarea class="form-input" id="description" name="description" rows="4" placeholder="Consignes ou informations utiles…"></textarea></div><div class="form-field form-field-wide"><label class="form-label" for="classe_id">Classe</label><select class="form-input" id="classe_id" name="classe_id" required data-summary-class>{% for classe in classes %}<option value="{{ classe['id'] }}">{{ classe['nom'] }}</option>{% endfor %}</select></div></div></section>
+  <section class="panel form-section"><div class="form-step"><span>2</span><div><h2>Planification</h2><p>Définissez le début et la durée de l’épreuve.</p></div></div><div class="form-grid form-grid-two"><div class="form-field"><label class="form-label" for="date_ouverture">Date d’ouverture</label><input class="form-input" id="date_ouverture" type="datetime-local" name="date_ouverture" required data-summary-date></div><div class="form-field"><label class="form-label" for="duree">Durée du devoir</label><select class="form-input" id="duree" name="duree" required data-summary-duration><option value="60">1 minute</option><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600" selected>1 heure</option><option value="7200">2 heures</option><option value="10800">3 heures</option><option value="14400">4 heures</option><option value="18000">5 heures</option></select></div></div></section>
+  <section class="panel form-section"><div class="form-step"><span>3</span><div><h2>Sujet</h2><p>Ajoutez le document remis aux élèves.</p></div></div><div class="form-field"><label class="dropzone" for="sujet" data-dropzone><input id="sujet" type="file" name="sujet" accept=".pdf,.docx,.jpg,.png" required data-file-input><span class="upload-icon" aria-hidden="true">⇧</span><strong>Déposez le sujet ici</strong><span>ou cliquez pour parcourir vos fichiers</span><small>PDF, DOCX, JPG ou PNG · 16 Mo maximum</small><span class="file-selection" data-file-name aria-live="polite"></span></label></div></section>
+  <section class="panel publish-summary" aria-labelledby="summary-title"><div><p class="eyebrow">Aperçu</p><h2 id="summary-title" data-summary-output>Titre du devoir</h2><p><span data-summary-class-output>Classe sélectionnée</span> · <span data-summary-date-output>Date à définir</span> · <span data-summary-duration-output>1 heure</span></p></div><div class="form-actions"><a class="button button-secondary" href="{{ url_for('dashboard_professeur') }}">Annuler</a><button class="button button-primary" type="submit">Publier le devoir <span aria-hidden="true">→</span></button></div></section>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,27 +1,34 @@
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Flask, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__, static_folder=None)
+app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('CLASSEXP_SECRET_KEY', 'dev-secret-change-me')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
+app.config['DATABASE'] = os.path.join(app.root_path, 'database', 'classexp.db')
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'png', 'docx'}
-DATABASE = os.path.join(app.root_path, 'database', 'classexp.db')
+
+
+def utc_now():
+    """Return naive UTC to stay compatible with existing SQLite values."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
-        os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
-        db = g._database = sqlite3.connect(DATABASE)
+        database_path = current_app.config['DATABASE']
+        os.makedirs(os.path.dirname(database_path), exist_ok=True)
+        db = g._database = sqlite3.connect(database_path)
         db.row_factory = sqlite3.Row
+        db.execute('PRAGMA foreign_keys = ON')
     return db
 
 
@@ -64,7 +71,7 @@ def init_db_command():
 
 @app.route('/')
 def accueil():
-    return send_from_directory(app.root_path, 'index.html')
+    return render_template('home.html')
 
 
 @app.route('/inscription', methods=['GET', 'POST'])
@@ -318,7 +325,7 @@ def commencer_devoir(devoir_id):
     devoir = devoir_accessible(devoir_id)
     if devoir is None:
         return 'Devoir introuvable.', 404
-    maintenant = datetime.utcnow()
+    maintenant = utc_now()
     ouverture = datetime.fromisoformat(devoir['date_ouverture'])
     if maintenant < ouverture:
         return 'Ce devoir n’est pas encore ouvert.', 403
@@ -344,7 +351,7 @@ def voir_devoir(devoir_id):
     if examen is None:
         return redirect(url_for('dashboard_eleve'))
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
-    restant = max(0, int((fin - datetime.utcnow()).total_seconds()))
+    restant = max(0, int((fin - utc_now()).total_seconds()))
     return render_template('devoir.html', devoir=devoir, restant=restant, examen=examen)
 
 
@@ -366,7 +373,7 @@ def rendre_copie():
     if devoir is None or examen is None:
         return 'Session invalide.', 403
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
-    if datetime.utcnow() >= fin:
+    if utc_now() >= fin:
         return 'Le temps est ecoule.', 403
     copie = request.files.get('copie')
     if copie is None or not copie.filename:
@@ -376,11 +383,12 @@ def rendre_copie():
 
     dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'copies', str(devoir_id))
     os.makedirs(dossier, exist_ok=True)
-    nom_fichier = secure_filename(f"{session['utilisateur_id']}_{copie.filename}")
+    nom_fichier = secure_filename(copie.filename)
+    nom_fichier = f"{session['utilisateur_id']}_{nom_fichier}"
     copie.save(os.path.join(dossier, nom_fichier))
     get_db().execute(
         "UPDATE sessions_examen SET fichier_copie = ?, heure_fin = ?, statut = 'TERMINE' WHERE id = ?",
-        (nom_fichier, datetime.utcnow().isoformat(timespec='seconds'), examen['id']),
+        (nom_fichier, utc_now().isoformat(timespec='seconds'), examen['id']),
     )
     get_db().commit()
     return redirect(url_for('copie_deposee'))

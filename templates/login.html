@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Connexion · ClasseXP{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="eyebrow">Espace personnel</p>
+  <h1>Connexion</h1>
+  <p>Connectez-vous avec votre compte ClasseXP.</p>
+  <form id="login-form" aria-label="Connexion">
+    <label for="user_mail">Adresse e-mail</label>
+    <input id="user_mail" name="user_mail" type="email" autocomplete="email" required>
+    <label for="user_passwd">Mot de passe</label>
+    <input id="user_passwd" name="user_passwd" type="password" autocomplete="current-password" required>
+    <p id="form-message" role="status" aria-live="polite"></p>
+    <button class="button" type="submit">Se connecter</button>
+  </form>
+</section>
+<script src="{{ url_for('static', filename='js/auth.js') }}" defer></script>
+{% endblock %}

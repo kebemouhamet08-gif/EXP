@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Accueil · ClasseXP{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Apprendre, progresser, réussir</p>
+  <h1>La classe continue, simplement.</h1>
+  <p>ClasseXP réunira les classes, les devoirs, les remises et la progression dans un espace clair.</p>
+  <a class="button" href="{{ url_for('pages.login') }}">Se connecter</a>
+</section>
+{% endblock %}

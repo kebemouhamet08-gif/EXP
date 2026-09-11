@@ -23,7 +23,17 @@
         <label>Titre<input name="titre" required></label><label>Description<textarea name="description" rows="4"></textarea></label>
         <label>Classe<select name="classe_id" required>{% for classe in classes %}<option value="{{ classe['id'] }}">{{ classe['nom'] }}</option>{% endfor %}</select></label>
         <label>Ouverture<input type="datetime-local" name="date_ouverture" required></label>
-        <label>Durée en secondes<input type="number" name="duree" min="60" value="10800" required></label>
+        <label>Durée du devoir
+            <select name="duree" required>
+                <option value="60">1 minute</option>
+                <option value="300">5 minutes</option>
+                <option value="600">10 minutes</option>
+                <option value="1800">30 minutes</option>
+                <option value="3600" selected>1 heure</option>
+                <option value="7200">2 heures</option>
+                <option value="10800">3 heures</option>
+            </select>
+        </label>
         <label>Sujet<input type="file" name="sujet" accept=".pdf,.docx,.jpg,.png" required></label><button type="submit">Publier le devoir</button>
     </form>
     {% endif %}

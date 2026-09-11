@@ -469,7 +469,7 @@ def external_login(provider):
     redirect_uri = url_for('external_callback', provider=provider, _external=True)
     params = {'nonce': secrets.token_urlsafe(32)} if PROVIDERS[provider].get('oidc') else {}
     if provider == 'apple':
-        params.update(response_mode='form_post', response_type='code id_token')
+        params.update(response_mode='form_post', response_type='code')
     if session.get('account_switch'):
         if provider == 'google':
             params['prompt'] = 'select_account'

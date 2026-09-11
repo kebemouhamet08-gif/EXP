@@ -134,7 +134,12 @@ def role_requis(role):
         @connexion_requise
         def route_protegee(*args, **kwargs):
             if session.get('role') != role:
-                return 'Acces interdit.', 403
+                if session.get('role') == 'PROFESSEUR':
+                    return redirect(url_for('dashboard_professeur'))
+                if session.get('role') == 'ELEVE':
+                    return redirect(url_for('dashboard_eleve'))
+                session.clear()
+                return redirect(url_for('connexion'))
             return route(*args, **kwargs)
         return route_protegee
     return decorateur

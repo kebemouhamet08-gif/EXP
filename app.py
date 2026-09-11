@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Flask, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -423,7 +423,41 @@ def copie_deposee():
 
 
 @app.get('/uploads/<path:nom_fichier>')
+@connexion_requise
 def telecharger_fichier(nom_fichier):
+    parties = nom_fichier.replace('\\', '/').split('/')
+    if len(parties) == 2 and parties[0] == 'sujets':
+        if session.get('role') == 'PROFESSEUR':
+            autorise = get_db().execute(
+                'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
+                (parties[1], session['utilisateur_id']),
+            ).fetchone() is not None
+        else:
+            autorise = get_db().execute(
+                '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
+                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
+                (parties[1], session['utilisateur_id']),
+            ).fetchone() is not None
+    elif len(parties) == 3 and parties[0] == 'copies' and parties[1].isdigit():
+        copie = get_db().execute(
+            '''SELECT s.eleve_id, d.professeur_id FROM sessions_examen s
+               JOIN devoirs d ON d.id = s.devoir_id
+               WHERE s.devoir_id = ? AND s.fichier_copie = ?''',
+            (int(parties[1]), parties[2]),
+        ).fetchone()
+        if copie is None:
+            abort(404)
+        autorise = (
+            session.get('role') == 'PROFESSEUR'
+            and copie['professeur_id'] == session['utilisateur_id']
+        ) or (
+            session.get('role') == 'ELEVE'
+            and copie['eleve_id'] == session['utilisateur_id']
+        )
+    else:
+        abort(404)
+    if not autorise:
+        abort(403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], nom_fichier)
 
 

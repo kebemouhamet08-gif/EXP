@@ -24,6 +24,14 @@ def login(client, email, password="motdepasse123"):
     return client.post("/connexion", data={"email": email, "mot_de_passe": password})
 
 
+def response_status(client, path):
+    response = client.get(path)
+    try:
+        return response.status_code
+    finally:
+        response.close()
+
+
 def create_class(client, name="Classe Test"):
     response = client.post("/professeur/classe/nouvelle", data={"nom": name})
     assert response.status_code == 302
@@ -199,3 +207,59 @@ def test_upload_types_and_download_path_security(professor, student, app):
     for extension in ("pdf", "jpg", "png", "docx"):
         assert create_assignment(professor["client"], class_id, filename=f"sujet.{extension}").status_code == 302
     assert professor["client"].get("/uploads/../../schema.sql").status_code in {404, 400}
+
+
+def test_ui_shell_and_static_assets(client):
+    home = client.get("/")
+    assert home.status_code == 200
+    assert b"La classe continue" in home.data
+    assert b'id="fonctionnalites"' in home.data
+    assert b'href="/connexion"' in home.data
+    assert b'href="/inscription"' in home.data
+    css = client.get("/static/css/app.css")
+    javascript = client.get("/static/js/app.js")
+    try:
+        assert css.mimetype == "text/css"
+        assert javascript.mimetype == "text/javascript"
+    finally:
+        css.close()
+        javascript.close()
+
+    registration = client.get("/inscription")
+    assert b'name="role" value="ELEVE"' in registration.data
+    assert b'name="role" value="PROFESSEUR"' in registration.data
+    assert b"data-password-toggle" in registration.data
+
+
+def test_uploaded_files_are_limited_to_authorized_users(professor, student, app, file_factory):
+    class_id, code = create_class(professor["client"])
+    student["client"].post("/eleve/classe/rejoindre", data={"code": code})
+    create_assignment(professor["client"], class_id, filename="sujet-prive.pdf")
+    with app.app_context():
+        assignment_id = application_module.get_db().execute(
+            "SELECT id FROM devoirs ORDER BY id DESC LIMIT 1"
+        ).fetchone()["id"]
+    student["client"].post(f"/devoir/{assignment_id}/commencer")
+    student["client"].post(
+        "/rendre_copie",
+        data={"devoir_id": str(assignment_id), **file_factory("copie-privee.pdf")},
+        content_type="multipart/form-data",
+    )
+    with app.app_context():
+        copy_name = application_module.get_db().execute(
+            "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
+        ).fetchone()["fichier_copie"]
+
+    subject_path = "/uploads/sujets/sujet-prive.pdf"
+    copy_path = f"/uploads/copies/{assignment_id}/{copy_name}"
+    assert response_status(professor["client"], subject_path) == 200
+    assert response_status(student["client"], subject_path) == 200
+    assert response_status(professor["client"], copy_path) == 200
+    assert response_status(student["client"], copy_path) == 200
+
+    stranger = app.test_client()
+    stranger_email, _ = register(stranger, name="ProfEtranger", role="PROFESSEUR")
+    login(stranger, stranger_email)
+    assert response_status(stranger, subject_path) == 403
+    assert response_status(stranger, copy_path) == 403
+    assert response_status(app.test_client(), copy_path) == 302

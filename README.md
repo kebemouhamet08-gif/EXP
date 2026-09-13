@@ -36,7 +36,10 @@ ClasseXP conserve la connexion locale par e-mail et mot de passe et peut aussi u
 Google, Facebook, Apple et Microsoft. L'application démarre sans ces fournisseurs :
 leurs boutons sont alors affichés comme « Non configuré ». Copiez `.env.example` vers
 un fichier `.env` ignoré par Git, puis injectez ces variables dans l'environnement du
-processus Flask (ClasseXP ne charge pas automatiquement le fichier `.env`).
+processus Flask. ClasseXP charge ce fichier au démarrage ; ne committez jamais `.env`.
+En développement, si `CLASSEXP_SECRET_KEY` est absente, une clé est générée une seule
+fois dans `.classexp-secret-key`, également ignoré par Git, afin que les sessions et
+les cookies « Se souvenir de moi » survivent aux redémarrages.
 
 - Google : `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Créez un client OAuth Web dans
   Google Cloud, activez OpenID Connect et enregistrez

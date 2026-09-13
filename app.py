@@ -14,14 +14,32 @@ from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
 from joserfc import jwt
 from joserfc.jwk import ECKey
+from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
+def resolve_secret_key(root_path):
+    configured = os.environ.get('CLASSEXP_SECRET_KEY')
+    if os.environ.get('CLASSEXP_HTTPS') == '1' and not configured:
+        raise RuntimeError('CLASSEXP_SECRET_KEY est obligatoire en production HTTPS.')
+    if configured:
+        return configured
+
+    local_secret_path = os.path.join(root_path, '.classexp-secret-key')
+    try:
+        with open(local_secret_path, 'r', encoding='ascii') as secret_file:
+            configured = secret_file.read().strip()
+    except FileNotFoundError:
+        configured = secrets.token_hex(32)
+        with open(local_secret_path, 'x', encoding='ascii') as secret_file:
+            secret_file.write(configured)
+    return configured
+
+
 app = Flask(__name__)
-configured_secret_key = os.environ.get('CLASSEXP_SECRET_KEY')
-if os.environ.get('CLASSEXP_HTTPS') == '1' and not configured_secret_key:
-    raise RuntimeError('CLASSEXP_SECRET_KEY est obligatoire en production HTTPS.')
-app.config['SECRET_KEY'] = configured_secret_key or secrets.token_hex(32)
+load_dotenv(os.path.join(app.root_path, '.env'))
+configured_secret_key = resolve_secret_key(app.root_path)
+app.config['SECRET_KEY'] = configured_secret_key
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
 app.config['DATABASE'] = os.path.join(app.root_path, 'database', 'classexp.db')
@@ -273,9 +291,12 @@ migrate_auth_schema()
 def end_local_session():
     """Clear all app state and instruct Flask-Login to expire its remember cookie."""
     was_authenticated = current_user.is_authenticated
-    session.clear()
     if was_authenticated:
         logout_user()
+    remember_clear = session.get('_remember') == 'clear'
+    session.clear()
+    if remember_clear:
+        session['_remember'] = 'clear'
 
 
 def replace_login(utilisateur, *, remember=False):
@@ -311,6 +332,21 @@ def init_db_command():
     print('La base de donnees ClasseXP a ete initialisee avec succes.')
 
 
+@app.cli.command('auth-status')
+def auth_status_command():
+    """Affiche l'etat de l'authentification sans exposer de secret."""
+    secret_source = 'configured' if os.environ.get('CLASSEXP_SECRET_KEY') else 'persistent'
+    print('Local authentication: READY')
+    print(f'Secret key: {secret_source}')
+    print(f'Database: {app.config["DATABASE"]}')
+    base_url = os.environ.get('CLASSEXP_BASE_URL', 'http://127.0.0.1:5000')
+    with app.test_request_context(base_url=base_url):
+        for provider in PROVIDERS:
+            state = 'READY' if provider_configured(provider) else 'NEEDS CONFIG'
+            print(f'{PROVIDERS[provider]["label"]}: {state}')
+            print(f'Callback: {url_for("external_callback", provider=provider, _external=True)}')
+
+
 @app.route('/')
 def accueil():
     return render_template('home.html')
@@ -339,16 +375,28 @@ def inscription():
             )
 
         try:
-            db.execute(
+            cursor = db.execute(
                 'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, ?, ?)',
                 (nom, email, generate_password_hash(mot_de_passe), role),
             )
             db.commit()
+            if db.execute(
+                'SELECT 1 FROM utilisateurs WHERE id = ?', (cursor.lastrowid,)
+            ).fetchone() is None:
+                raise sqlite3.DatabaseError('Le compte n\'a pas ete persiste.')
         except sqlite3.IntegrityError:
+            db.rollback()
             return render_template(
                 'auth.html', mode='inscription', compte_existant=True,
                 error='Un compte existe deja avec cette adresse email.',
             )
+        except sqlite3.Error:
+            db.rollback()
+            return render_template(
+                'auth.html', mode='inscription',
+                error='Impossible de creer le compte. Verifiez les donnees puis reessayez.',
+            )
+        flash('Compte créé avec succès. Vous pouvez maintenant vous connecter.', 'success')
         return redirect(url_for('connexion'))
 
     return render_template('auth.html', mode='inscription')

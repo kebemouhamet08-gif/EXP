@@ -9,6 +9,7 @@ instance/
 database/
 storage/
 .env
+.classexp-secret-key
 coverage.xml
 .coverage
 htmlcov/

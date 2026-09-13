@@ -91,6 +91,15 @@ def test_user_survives_new_client_and_startup_check(client, app):
         ).fetchone()[0] == 1
 
 
+def test_secret_key_is_stable_between_application_starts(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLASSEXP_SECRET_KEY", raising=False)
+    monkeypatch.delenv("CLASSEXP_HTTPS", raising=False)
+    first = application_module.resolve_secret_key(str(tmp_path))
+    second = application_module.resolve_secret_key(str(tmp_path))
+    assert first
+    assert first == second
+
+
 def test_remember_cookie_restores_login_in_new_client(client, app):
     email, _ = register(client)
     normal_response = login(client, email)

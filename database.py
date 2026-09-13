@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from flask import current_app, g
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Connection, Engine, make_url
 
 from models import metadata
 
@@ -61,6 +61,9 @@ def _engine(url: str) -> Engine:
     if engine is None:
         options = {"pool_pre_ping": True, "hide_parameters": True}
         if database_backend(url) == "sqlite":
+            sqlite_database = make_url(url).database
+            if sqlite_database and sqlite_database != ":memory:":
+                Path(sqlite_database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
             options["connect_args"] = {"check_same_thread": False}
         engine = create_engine(url, **options)
         if database_backend(url) == "sqlite":

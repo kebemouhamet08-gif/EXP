@@ -1,6 +1,6 @@
 import pytest
 
-from database import redact_database_url, validate_production_database
+from database import create_schema, redact_database_url, validate_production_database
 from storage import validate_production_storage
 
 
@@ -22,3 +22,9 @@ def test_database_url_redaction_hides_password():
     redacted = redact_database_url('postgresql+psycopg://user:top-secret@db.example/test')
     assert 'top-secret' not in redacted
     assert '***' in redacted
+
+
+def test_sqlite_parent_directory_is_created(tmp_path):
+    database_path = tmp_path / 'missing' / 'nested' / 'classexp.sqlite'
+    create_schema({'DATABASE_URL': f'sqlite:///{database_path.as_posix()}'})
+    assert database_path.is_file()

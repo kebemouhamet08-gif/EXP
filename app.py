@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Flask, abort, current_app, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from flask_login.config import COOKIE_DURATION, COOKIE_HTTPONLY, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE
 from flask_login.utils import encode_cookie

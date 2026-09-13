@@ -144,7 +144,16 @@ def test_auth_migration_is_idempotent_and_preserves_users(client, app):
         db = application_module.get_db()
         assert db.execute("SELECT COUNT(*) FROM utilisateurs").fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM identites_externes").fetchone()[0] == 0
-        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        if application_module.database_backend(
+            application_module.database_url_from_config(app.config)
+        ) == "sqlite":
+            assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        else:
+            assert db.execute(
+                '''SELECT COUNT(*) FROM identites_externes i
+                   LEFT JOIN utilisateurs u ON u.id = i.utilisateur_id
+                   WHERE u.id IS NULL'''
+            ).fetchone()[0] == 0
 
 
 def test_unconfigured_provider_is_disabled_without_breaking_startup(client):

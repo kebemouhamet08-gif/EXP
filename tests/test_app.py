@@ -1,4 +1,4 @@
-import sqlite3
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -75,17 +75,22 @@ def test_public_pages_and_anonymous_access(client):
 def test_database_constraints_and_foreign_keys(app):
     with app.app_context():
         connection = application_module.get_db()
-        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        with pytest.raises(sqlite3.IntegrityError):
+        if application_module.database_backend(
+            application_module.database_url_from_config(app.config)
+        ) == "sqlite":
+            assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        with pytest.raises(IntegrityError):
             connection.execute(
                 "INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, ?, ?)",
                 ("Invalide", "bad@example.com", "hash", "ADMIN"),
             )
-        with pytest.raises(sqlite3.IntegrityError):
+        connection.rollback()
+        with pytest.raises(IntegrityError):
             connection.execute(
                 "INSERT INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)",
                 (9999, 9999),
             )
+        connection.rollback()
 
 
 def test_init_db_is_explicit_reset(app):
@@ -126,8 +131,9 @@ def test_assignment_creation_upload_and_duration(professor, app):
     assert row["duree"] == 18000
     assert row["sujet_pdf"] != "Sujet.PDF"
     assert row["sujet_pdf"].endswith(".pdf")
-    assert len(row["sujet_pdf"]) == 36
-    assert Path(app.config["UPLOAD_FOLDER"], "sujets", row["sujet_pdf"]).exists()
+    assert row["sujet_pdf"].startswith("subjects/devoir-")
+    assert len(Path(row["sujet_pdf"]).name) == 36
+    assert Path(app.config["UPLOAD_FOLDER"], row["sujet_pdf"]).exists()
 
 
 def test_assignment_rejects_invalid_file_and_missing_file(professor):
@@ -206,8 +212,9 @@ def test_student_submission_and_teacher_copies(professor, student, app, file_fac
             "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
         ).fetchone()["fichier_copie"]
     assert stored_copy.endswith(".pdf")
-    assert len(stored_copy) == 36
-    assert Path(app.config["UPLOAD_FOLDER"], "copies", str(assignment_id), stored_copy).exists()
+    assert stored_copy.startswith(f"copies/devoir-{assignment_id}/eleve-")
+    assert len(Path(stored_copy).name) == 36
+    assert Path(app.config["UPLOAD_FOLDER"], stored_copy).exists()
     copies = professor["client"].get(f"/professeur/devoir/{assignment_id}/copies")
     assert copies.status_code == 200 and b"Remise" in copies.data
     assert b".." not in copies.data
@@ -243,9 +250,9 @@ def test_repeated_copy_names_receive_distinct_storage_names(professor, student, 
             "SELECT fichier_copie FROM sessions_examen WHERE devoir_id = ?", (assignment_id,)
         ).fetchone()["fichier_copie"]
 
-    copy_folder = Path(app.config["UPLOAD_FOLDER"], "copies", str(assignment_id))
+    copy_folder = Path(app.config["UPLOAD_FOLDER"])
     assert first_name != second_name
-    assert (copy_folder / first_name).read_bytes() == b"premiere"
+    assert not (copy_folder / first_name).exists()
     assert (copy_folder / second_name).read_bytes() == b"seconde"
 
 
@@ -302,8 +309,8 @@ def test_uploaded_files_are_limited_to_authorized_users(professor, student, app,
         subject_name = application_module.get_db().execute(
             "SELECT sujet_pdf FROM devoirs WHERE id = ?", (assignment_id,)
         ).fetchone()["sujet_pdf"]
-    subject_path = f"/uploads/sujets/{subject_name}"
-    copy_path = f"/uploads/copies/{assignment_id}/{copy_name}"
+    subject_path = f"/uploads/{subject_name}"
+    copy_path = f"/uploads/{copy_name}"
     assert response_status(professor["client"], subject_path) == 200
     assert response_status(student["client"], subject_path) == 200
     assert response_status(professor["client"], copy_path) == 200
@@ -342,16 +349,44 @@ def test_identical_subject_names_never_overwrite_each_other(professor, app):
         ).fetchall()
     stored_names = [row["sujet_pdf"] for row in rows]
     assert len(set(stored_names)) == 3
-    assert all(name.endswith(".pdf") and len(name) == 36 for name in stored_names)
+    assert all(name.endswith(".pdf") and len(Path(name).name) == 36 for name in stored_names)
 
-    subject_folder = Path(app.config["UPLOAD_FOLDER"], "sujets")
+    subject_folder = Path(app.config["UPLOAD_FOLDER"])
     assert (subject_folder / rows[0]["sujet_pdf"]).read_bytes() == b"contenu-A"
     assert (subject_folder / rows[1]["sujet_pdf"]).read_bytes() == b"contenu-B"
     assert (subject_folder / rows[2]["sujet_pdf"]).read_bytes() == b"contenu-A-bis"
 
-    path_a = f'/uploads/sujets/{rows[0]["sujet_pdf"]}'
-    path_b = f'/uploads/sujets/{rows[1]["sujet_pdf"]}'
+    path_a = f'/uploads/{rows[0]["sujet_pdf"]}'
+    path_b = f'/uploads/{rows[1]["sujet_pdf"]}'
     assert response_status(professor_a, path_a) == 200
     assert response_status(professor_b, path_b) == 200
     assert response_status(professor_a, path_b) == 403
     assert response_status(professor_b, path_a) == 403
+
+
+def test_private_pages_disable_http_caching(client):
+    response = client.get('/connexion')
+    assert response.headers['Cache-Control'] == 'no-store, private'
+
+
+def test_health_checks_database(client):
+    response = client.get('/health')
+    assert response.status_code == 200
+    assert response.get_json() == {'status': 'ok', 'database': 'ok'}
+
+
+def test_storage_failure_does_not_create_assignment(professor, app, monkeypatch):
+    class_id, _ = create_class(professor['client'])
+
+    class BrokenStorage:
+        def put(self, *_args, **_kwargs):
+            raise application_module.StorageError('indisponible')
+
+        def delete(self, _key):
+            return None
+
+    monkeypatch.setattr(application_module, 'get_storage', lambda: BrokenStorage())
+    response = create_assignment(professor['client'], class_id)
+    assert response.status_code == 503
+    with app.app_context():
+        assert application_module.get_db().execute('SELECT COUNT(*) FROM devoirs').fetchone()[0] == 0

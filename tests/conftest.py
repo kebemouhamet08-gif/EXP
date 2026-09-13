@@ -1,4 +1,5 @@
 import io
+import os
 import uuid
 
 import pytest
@@ -9,12 +10,18 @@ import app as application_module
 @pytest.fixture()
 def app(tmp_path):
     application = application_module.app
-    application.config.update(
+    test_database_url = os.environ.get("CLASSEXP_TEST_DATABASE_URL")
+    settings = dict(
         TESTING=True,
         SECRET_KEY="test-secret",
-        DATABASE=str(tmp_path / "classexp.sqlite"),
         UPLOAD_FOLDER=str(tmp_path / "uploads"),
+        STORAGE_BACKEND="local",
     )
+    if test_database_url:
+        settings.update(DATABASE=None, DATABASE_URL=test_database_url)
+    else:
+        settings.update(DATABASE=str(tmp_path / "classexp.sqlite"))
+    application.config.update(settings)
     application_module.init_db()
     yield application
     with application.app_context():

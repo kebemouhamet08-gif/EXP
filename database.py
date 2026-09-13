@@ -18,6 +18,12 @@ from models import metadata
 _engines: dict[str, Engine] = {}
 
 
+def dispose_engines() -> None:
+    for engine in _engines.values():
+        engine.dispose()
+    _engines.clear()
+
+
 def database_url_from_config(config) -> str:
     if config.get("TESTING") and config.get("DATABASE"):
         return f"sqlite:///{Path(config['DATABASE']).resolve().as_posix()}"

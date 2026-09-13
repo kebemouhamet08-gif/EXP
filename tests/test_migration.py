@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, func, select
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from models import metadata, utilisateurs
+from database import _engine, _engines, dispose_engines
 
 
 def migration_fixture(path):
@@ -58,6 +59,13 @@ def test_sqlite_migration_dry_run_reports_every_entity(tmp_path):
         assert expected in result.stdout
 
 
+def test_dispose_engines_clears_engine_cache(tmp_path):
+    _engine(f"sqlite:///{tmp_path / 'lifecycle.sqlite'}")
+    assert _engines
+    dispose_engines()
+    assert not _engines
+
+
 @pytest.mark.skipif(
     not os.environ.get('CLASSEXP_TEST_DATABASE_URL'),
     reason='PostgreSQL reel disponible dans le job CI postgres',
@@ -65,16 +73,19 @@ def test_sqlite_migration_dry_run_reports_every_entity(tmp_path):
 def test_sqlite_to_real_postgres_preserves_ids_hashes_and_relations(tmp_path):
     target_url = os.environ['CLASSEXP_TEST_DATABASE_URL']
     target = create_engine(target_url)
-    metadata.drop_all(target)
-    metadata.create_all(target)
-    source = tmp_path / 'source.sqlite'
-    expected_hash = migration_fixture(source)
-    result = run_migration('--source', str(source), '--target-url', target_url)
-    assert result.returncode == 0, result.stdout + result.stderr
-    with target.connect() as connection:
-        assert connection.execute(select(func.count()).select_from(utilisateurs)).scalar_one() == 2
-        row = connection.execute(
-            select(utilisateurs).where(utilisateurs.c.id == 1)
-        ).mappings().one()
-        assert row['mot_de_passe_hash'] == expected_hash
-        assert check_password_hash(row['mot_de_passe_hash'], 'motdepasse123')
+    try:
+        metadata.drop_all(target)
+        metadata.create_all(target)
+        source = tmp_path / 'source.sqlite'
+        expected_hash = migration_fixture(source)
+        result = run_migration('--source', str(source), '--target-url', target_url)
+        assert result.returncode == 0, result.stdout + result.stderr
+        with target.connect() as connection:
+            assert connection.execute(select(func.count()).select_from(utilisateurs)).scalar_one() == 2
+            row = connection.execute(
+                select(utilisateurs).where(utilisateurs.c.id == 1)
+            ).mappings().one()
+            assert row['mot_de_passe_hash'] == expected_hash
+            assert check_password_hash(row['mot_de_passe_hash'], 'motdepasse123')
+    finally:
+        target.dispose()

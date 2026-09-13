@@ -67,54 +67,57 @@ def main():
     if not args.dry_run and required_r2_values(config):
         raise SystemExit("Credentials R2 incomplets.")
     engine = create_engine(args.database_url, pool_pre_ping=True)
-    root = Path(args.uploads).resolve()
-    report = {"FOUND": 0, "MISSING_SOURCE_FILE": 0, "ALREADY_OBJECT_KEY": 0, "MIGRATED": 0}
-    storage = S3CompatibleStorageBackend(config) if not args.dry_run else None
-    with engine.connect() as connection:
-        rows = list(references(connection))
-        connection.rollback()
-        for table, record_id, column, old_path, kind in rows:
-            if old_path.startswith(("subjects/", "copies/", "corrections/")):
-                report["ALREADY_OBJECT_KEY"] += 1
-                continue
-            devoir_id = record_id
-            if table == "sessions_examen":
-                devoir_id = connection.execute(
-                    text("SELECT devoir_id FROM sessions_examen WHERE id=:id"), {"id": record_id}
-                ).scalar_one()
-            source = locate(root, table, record_id, old_path, kind, devoir_id)
-            if source is None:
-                report["MISSING_SOURCE_FILE"] += 1
-                print(f"MISSING_SOURCE_FILE table={table} id={record_id} path={old_path}")
-                continue
-            report["FOUND"] += 1
-            if kind == "copies":
-                key = f"copies/devoir-{devoir_id}/session-{record_id}/{source.name}"
-            else:
-                key = f"{kind}/devoir-{devoir_id}/{source.name}"
-            checksum = sha256(source)
-            print(f"FOUND table={table} id={record_id} size={source.stat().st_size} sha256={checksum} -> {key}")
-            if args.dry_run:
-                continue
-            try:
-                with source.open("rb") as stream:
-                    storage.put(key, stream)
-                if not storage.exists(key) or storage.size(key) != source.stat().st_size:
-                    raise StorageError("Objet absent ou taille incorrecte apres upload.")
-                with engine.begin() as write_connection:
-                    write_connection.execute(
-                        text(f"UPDATE {table} SET {column}=:key WHERE id=:id AND {column}=:old"),
-                        {"key": key, "id": record_id, "old": old_path},
-                    )
-                report["MIGRATED"] += 1
-            except Exception:
+    try:
+        root = Path(args.uploads).resolve()
+        report = {"FOUND": 0, "MISSING_SOURCE_FILE": 0, "ALREADY_OBJECT_KEY": 0, "MIGRATED": 0}
+        storage = S3CompatibleStorageBackend(config) if not args.dry_run else None
+        with engine.connect() as connection:
+            rows = list(references(connection))
+            connection.rollback()
+            for table, record_id, column, old_path, kind in rows:
+                if old_path.startswith(("subjects/", "copies/", "corrections/")):
+                    report["ALREADY_OBJECT_KEY"] += 1
+                    continue
+                devoir_id = record_id
+                if table == "sessions_examen":
+                    devoir_id = connection.execute(
+                        text("SELECT devoir_id FROM sessions_examen WHERE id=:id"), {"id": record_id}
+                    ).scalar_one()
+                source = locate(root, table, record_id, old_path, kind, devoir_id)
+                if source is None:
+                    report["MISSING_SOURCE_FILE"] += 1
+                    print(f"MISSING_SOURCE_FILE table={table} id={record_id} path={old_path}")
+                    continue
+                report["FOUND"] += 1
+                if kind == "copies":
+                    key = f"copies/devoir-{devoir_id}/session-{record_id}/{source.name}"
+                else:
+                    key = f"{kind}/devoir-{devoir_id}/{source.name}"
+                checksum = sha256(source)
+                print(f"FOUND table={table} id={record_id} size={source.stat().st_size} sha256={checksum} -> {key}")
+                if args.dry_run:
+                    continue
                 try:
-                    storage.delete(key)
-                except StorageError:
-                    pass
-                raise
-    print("Rapport:", report)
-    print("Les fichiers locaux originaux n'ont pas ete supprimes.")
+                    with source.open("rb") as stream:
+                        storage.put(key, stream)
+                    if not storage.exists(key) or storage.size(key) != source.stat().st_size:
+                        raise StorageError("Objet absent ou taille incorrecte apres upload.")
+                    with engine.begin() as write_connection:
+                        write_connection.execute(
+                            text(f"UPDATE {table} SET {column}=:key WHERE id=:id AND {column}=:old"),
+                            {"key": key, "id": record_id, "old": old_path},
+                        )
+                    report["MIGRATED"] += 1
+                except Exception:
+                    try:
+                        storage.delete(key)
+                    except StorageError:
+                        pass
+                    raise
+        print("Rapport:", report)
+        print("Les fichiers locaux originaux n'ont pas ete supprimes.")
+    finally:
+        engine.dispose()
 
 
 if __name__ == "__main__":

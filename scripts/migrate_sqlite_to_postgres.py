@@ -135,8 +135,11 @@ def main():
     if not source_path.is_file():
         raise SystemExit(f"Source SQLite introuvable: {source_path}")
     source = sqlite3.connect(f"file:{source_path.resolve()}?mode=ro", uri=True)
-    collected = {table.name: source_rows(source, table) for table in TABLES}
-    validate_source(source, collected)
+    try:
+        collected = {table.name: source_rows(source, table) for table in TABLES}
+        validate_source(source, collected)
+    finally:
+        source.close()
     for table in TABLES:
         print(f"{table.name}: {len(collected[table.name])}")
     if args.dry_run:
@@ -145,18 +148,21 @@ def main():
     if not args.target_url or not args.target_url.startswith("postgresql"):
         raise SystemExit("--target-url PostgreSQL est obligatoire hors dry-run.")
     engine = create_engine(args.target_url, pool_pre_ping=True)
-    with engine.begin() as target:
-        target_must_be_empty(target)
-        for table in TABLES:
-            if collected[table.name]:
-                target.execute(table.insert(), collected[table.name])
-        verify_target(target, collected)
-        reset_postgres_sequences(target)
-        for check in args.verify_password:
-            email, password = check.split("=", 1)
-            user = next((row for row in collected["utilisateurs"] if row["email"] == email), None)
-            if not user or not user.get("mot_de_passe_hash") or not check_password_hash(user["mot_de_passe_hash"], password):
-                raise RuntimeError(f"Verification de mot de passe echouee pour {email}")
+    try:
+        with engine.begin() as target:
+            target_must_be_empty(target)
+            for table in TABLES:
+                if collected[table.name]:
+                    target.execute(table.insert(), collected[table.name])
+            verify_target(target, collected)
+            reset_postgres_sequences(target)
+            for check in args.verify_password:
+                email, password = check.split("=", 1)
+                user = next((row for row in collected["utilisateurs"] if row["email"] == email), None)
+                if not user or not user.get("mot_de_passe_hash") or not check_password_hash(user["mot_de_passe_hash"], password):
+                    raise RuntimeError(f"Verification de mot de passe echouee pour {email}")
+    finally:
+        engine.dispose()
     print("Migration validee et commitee.")
 
 

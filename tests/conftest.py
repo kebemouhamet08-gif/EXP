@@ -5,6 +5,13 @@ import uuid
 import pytest
 
 import app as application_module
+from database import dispose_engines
+
+
+@pytest.fixture(scope="session", autouse=True)
+def dispose_database_engines():
+    yield
+    dispose_engines()
 
 
 @pytest.fixture()

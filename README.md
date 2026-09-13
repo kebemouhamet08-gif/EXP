@@ -86,3 +86,27 @@ python -m pip install -r requirements.txt
 python -m compileall .
 pytest -vv --cov=app --cov-report=term-missing
 ```
+
+## Persistance de production
+
+`DATABASE_URL` est la source de verite. Le developpement accepte
+`sqlite:///database/classexp.db`; la production exige une URL
+`postgresql+psycopg://`. `STORAGE_BACKEND=local` est reserve au developpement et aux
+tests; `STORAGE_BACKEND=r2` utilise boto3 avec tout endpoint S3 compatible.
+
+Les cles de fichiers en DB sont opaques (`subjects/devoir-42/<uuid>.pdf`) et jamais
+des chemins absolus Render. Les fichiers restent prives : Flask controle d'abord le
+role et la propriete, puis R2 emet une URL presignee de cinq minutes.
+
+Commandes operatoires :
+
+```powershell
+alembic upgrade head
+python scripts/migrate_sqlite_to_postgres.py --source database/classexp.db --dry-run
+python scripts/migrate_local_uploads_to_object_storage.py --dry-run
+python scripts/backup_local_data.py
+flask --app app system-status
+```
+
+Le guide Neon, Supabase, Cloudflare R2, Render, migration, rollback et validation
+apres redeploiement est dans [docs/deployment-render.md](docs/deployment-render.md).

@@ -13,3 +13,4 @@ storage/
 coverage.xml
 .coverage
 htmlcov/
+backup/

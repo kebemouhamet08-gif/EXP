@@ -1,12 +1,12 @@
 import os
 import json
 import secrets
-import sqlite3
 import uuid
+import mimetypes
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
-from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from flask_login.config import COOKIE_DURATION, COOKIE_HTTPONLY, COOKIE_NAME, COOKIE_SAMESITE, COOKIE_SECURE
 from flask_login.utils import encode_cookie
@@ -17,11 +17,25 @@ from joserfc.jwk import ECKey
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from database import (
+    close_db,
+    create_schema,
+    database_backend,
+    database_ping,
+    database_url_from_config,
+    get_db,
+    migration_version,
+    validate_production_database,
+)
+from storage import StorageError, build_storage, required_r2_values, validate_production_storage
 
 def resolve_secret_key(root_path):
     configured = os.environ.get('CLASSEXP_SECRET_KEY')
-    if os.environ.get('CLASSEXP_HTTPS') == '1' and not configured:
-        raise RuntimeError('CLASSEXP_SECRET_KEY est obligatoire en production HTTPS.')
+    environment = resolve_environment()
+    if environment == 'production' and not configured:
+        raise RuntimeError('CLASSEXP_SECRET_KEY est obligatoire et doit etre persistante en production.')
     if configured:
         return configured
 
@@ -36,13 +50,32 @@ def resolve_secret_key(root_path):
     return configured
 
 
+def resolve_environment():
+    configured = os.environ.get('CLASSEXP_ENV') or os.environ.get('FLASK_ENV')
+    if configured:
+        return configured.lower()
+    if os.environ.get('RENDER'):
+        return 'production'
+    return 'development'
+
+
 app = Flask(__name__)
 load_dotenv(os.path.join(app.root_path, '.env'))
+app.config['CLASSEXP_ENV'] = resolve_environment()
 configured_secret_key = resolve_secret_key(app.root_path)
 app.config['SECRET_KEY'] = configured_secret_key
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
-app.config['DATABASE'] = os.path.join(app.root_path, 'database', 'classexp.db')
+default_database_url = f"sqlite:///{os.path.join(app.root_path, 'database', 'classexp.db').replace(os.sep, '/')}"
+app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL') or (
+    '' if app.config['CLASSEXP_ENV'] == 'production' else default_database_url
+)
+app.config['STORAGE_BACKEND'] = os.environ.get('STORAGE_BACKEND', 'local').lower()
+for storage_setting in (
+    'R2_ENDPOINT_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'R2_REGION'
+):
+    app.config[storage_setting] = os.environ.get(storage_setting)
+app.config['R2_REGION'] = app.config['R2_REGION'] or 'auto'
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
@@ -63,6 +96,22 @@ app.config['MICROSOFT_CLIENT_ID'] = os.environ.get('MICROSOFT_CLIENT_ID')
 app.config['MICROSOFT_CLIENT_SECRET'] = os.environ.get('MICROSOFT_CLIENT_SECRET')
 app.config['MICROSOFT_TENANT'] = os.environ.get('MICROSOFT_TENANT', 'common')
 ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'png', 'docx'}
+ALLOWED_CONTENT_TYPES = {
+    'pdf': {'application/pdf', 'application/octet-stream'},
+    'jpg': {'image/jpeg', 'application/octet-stream'},
+    'png': {'image/png', 'application/octet-stream'},
+    'docx': {
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/octet-stream',
+    },
+}
+
+validate_production_database(app.config['CLASSEXP_ENV'], app.config['DATABASE_URL'])
+validate_production_storage(
+    app.config['CLASSEXP_ENV'], app.config['STORAGE_BACKEND'], app.config
+)
+app.logger.info('Database backend: %s', database_backend(app.config['DATABASE_URL']).title())
+app.logger.info('Storage backend: %s', app.config['STORAGE_BACKEND'].upper())
 
 PROVIDERS = {
     'google': {'label': 'Google', 'oidc': True},
@@ -181,22 +230,16 @@ def utc_now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def get_db():
-    db = getattr(g, '_database', None)
-    if db is None:
-        database_path = current_app.config['DATABASE']
-        os.makedirs(os.path.dirname(database_path), exist_ok=True)
-        db = g._database = sqlite3.connect(database_path)
-        db.row_factory = sqlite3.Row
-        db.execute('PRAGMA foreign_keys = ON')
-    return db
+def get_storage():
+    storage_service = getattr(g, '_storage_service', None)
+    if storage_service is None:
+        storage_service = g._storage_service = build_storage(current_app.config)
+    return storage_service
 
 
 @app.teardown_appcontext
 def close_connection(exception):
-    db = getattr(g, '_database', None)
-    if db is not None:
-        db.close()
+    close_db(exception)
 
 
 @login_manager.user_loader
@@ -212,80 +255,22 @@ def load_user(user_id):
 
 
 def init_db():
-    with app.app_context():
-        db = get_db()
-        with app.open_resource('schema.sql', mode='r', encoding='utf-8') as file:
-            db.cursor().executescript(file.read())
-        db.commit()
+    create_schema(app.config, drop=True)
 
 
 def ensure_db_initialized():
-    with app.app_context():
-        db = get_db()
-        table = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'utilisateurs'"
-        ).fetchone()
-        if table is None:
-            with app.open_resource('schema.sql', mode='r', encoding='utf-8') as file:
-                db.executescript(file.read())
-            db.commit()
+    if app.config.get('CLASSEXP_ENV') == 'production':
+        return
+    create_schema(app.config)
 
 
 def migrate_auth_schema():
-    """Add external identities without changing existing user IDs or data."""
-    with app.app_context():
-        db = get_db()
-        before = db.execute('SELECT COUNT(*) FROM utilisateurs').fetchone()[0]
-        columns = {row['name']: row for row in db.execute('PRAGMA table_info(utilisateurs)')}
-        if columns['mot_de_passe_hash']['notnull']:
-            db.commit()
-            db.execute('PRAGMA foreign_keys = OFF')
-            try:
-                db.execute('BEGIN IMMEDIATE')
-                db.execute('''CREATE TABLE utilisateurs_auth_migration (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nom TEXT NOT NULL,
-                    email TEXT UNIQUE NOT NULL,
-                    mot_de_passe_hash TEXT,
-                    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR')) NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )''')
-                db.execute('''INSERT INTO utilisateurs_auth_migration
-                    (id, nom, email, mot_de_passe_hash, role)
-                    SELECT id, nom, email, mot_de_passe_hash, role FROM utilisateurs''')
-                db.execute('DROP TABLE utilisateurs')
-                db.execute('ALTER TABLE utilisateurs_auth_migration RENAME TO utilisateurs')
-                db.commit()
-            except Exception:
-                db.rollback()
-                raise
-            finally:
-                db.execute('PRAGMA foreign_keys = ON')
-        elif 'created_at' not in columns:
-            db.execute('ALTER TABLE utilisateurs ADD COLUMN created_at TEXT')
-            db.execute('UPDATE utilisateurs SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL')
-
-        db.execute('''CREATE TABLE IF NOT EXISTS identites_externes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            utilisateur_id INTEGER NOT NULL,
-            provider TEXT NOT NULL CHECK(provider IN ('google', 'facebook', 'apple', 'microsoft')),
-            provider_subject TEXT NOT NULL,
-            email_provider TEXT,
-            email_verified INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            last_login_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (utilisateur_id) REFERENCES utilisateurs(id) ON DELETE CASCADE,
-            UNIQUE (provider, provider_subject)
-        )''')
-        db.commit()
-        after = db.execute('SELECT COUNT(*) FROM utilisateurs').fetchone()[0]
-        foreign_key_errors = db.execute('PRAGMA foreign_key_check').fetchall()
-        if before != after or foreign_key_errors:
-            raise RuntimeError('La migration OAuth n\'a pas preserve les donnees existantes.')
+    """Compatibility shim: versioned migrations now own schema evolution."""
+    ensure_db_initialized()
 
 
 ensure_db_initialized()
-migrate_auth_schema()
+app.logger.info('Migration version: %s', migration_version(app.config))
 
 
 def end_local_session():
@@ -328,6 +313,8 @@ def inject_navigation_context():
 @app.cli.command('init-db')
 def init_db_command():
     """Efface les donnees existantes et cree les tables."""
+    if app.config['CLASSEXP_ENV'] == 'production':
+        raise RuntimeError('init-db est interdite en production; utilisez Alembic.')
     init_db()
     print('La base de donnees ClasseXP a ete initialisee avec succes.')
 
@@ -338,13 +325,40 @@ def auth_status_command():
     secret_source = 'configured' if os.environ.get('CLASSEXP_SECRET_KEY') else 'persistent'
     print('Local authentication: READY')
     print(f'Secret key: {secret_source}')
-    print(f'Database: {app.config["DATABASE"]}')
+    print(f'Database backend: {database_backend(database_url_from_config(app.config))}')
     base_url = os.environ.get('CLASSEXP_BASE_URL', 'http://127.0.0.1:5000')
     with app.test_request_context(base_url=base_url):
         for provider in PROVIDERS:
             state = 'READY' if provider_configured(provider) else 'NEEDS CONFIG'
             print(f'{PROVIDERS[provider]["label"]}: {state}')
             print(f'Callback: {url_for("external_callback", provider=provider, _external=True)}')
+
+
+@app.cli.command('system-status')
+def system_status_command():
+    """Check production dependencies without exposing credentials."""
+    environment = app.config['CLASSEXP_ENV']
+    backend = database_backend(database_url_from_config(app.config))
+    print(f'Environment: {environment}')
+    print('\nDatabase:')
+    print(f'  backend: {backend}')
+    print('  configured: yes')
+    print(f'  connection: {"ok" if database_ping(app.config) else "failed"}')
+    print('\nStorage:')
+    print(f'  backend: {app.config["STORAGE_BACKEND"]}')
+    missing = required_r2_values(app.config) if app.config['STORAGE_BACKEND'] != 'local' else []
+    print(f'  configured: {"no" if missing else "yes"}')
+    try:
+        storage_ok = not missing and get_storage().check()
+    except StorageError:
+        storage_ok = False
+    print(f'  connection: {"ok" if storage_ok else "failed"}')
+    print('\nSecret key:')
+    persistent = bool(os.environ.get('CLASSEXP_SECRET_KEY')) or environment != 'production'
+    print(f'  persistent: {"yes" if persistent else "no"}')
+    with app.test_request_context(base_url=os.environ.get('CLASSEXP_BASE_URL', 'http://127.0.0.1:5000')):
+        for provider in PROVIDERS:
+            print(f'{PROVIDERS[provider]["label"]}: {"READY" if provider_configured(provider) else "NEEDS CONFIG"}')
 
 
 @app.route('/')
@@ -376,21 +390,22 @@ def inscription():
 
         try:
             cursor = db.execute(
-                'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, ?, ?)',
+                'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, ?, ?) RETURNING id',
                 (nom, email, generate_password_hash(mot_de_passe), role),
             )
+            utilisateur_id = cursor.fetchone()['id']
             db.commit()
             if db.execute(
-                'SELECT 1 FROM utilisateurs WHERE id = ?', (cursor.lastrowid,)
+                'SELECT 1 FROM utilisateurs WHERE id = ?', (utilisateur_id,)
             ).fetchone() is None:
-                raise sqlite3.DatabaseError('Le compte n\'a pas ete persiste.')
-        except sqlite3.IntegrityError:
+                raise SQLAlchemyError('Le compte n\'a pas ete persiste.')
+        except IntegrityError:
             db.rollback()
             return render_template(
                 'auth.html', mode='inscription', compte_existant=True,
                 error='Un compte existe deja avec cette adresse email.',
             )
-        except sqlite3.Error:
+        except SQLAlchemyError:
             db.rollback()
             return render_template(
                 'auth.html', mode='inscription',
@@ -563,7 +578,7 @@ def external_callback(provider):
                    (utilisateur_id, provider, provider_subject, email_provider, email_verified)
                    VALUES (?, ?, ?, ?, ?)''',
                 (current_user.id, provider, profile['subject'], profile.get('email'),
-                 int(profile.get('email_verified', False))),
+                 bool(profile.get('email_verified', False))),
             )
             db.commit()
         return redirect(url_for('mon_compte'))
@@ -572,7 +587,7 @@ def external_callback(provider):
         db.execute(
             '''UPDATE identites_externes SET last_login_at = CURRENT_TIMESTAMP,
                email_provider = COALESCE(?, email_provider), email_verified = ? WHERE id = ?''',
-            (profile.get('email'), int(profile.get('email_verified', False)), identity['identity_id']),
+            (profile.get('email'), bool(profile.get('email_verified', False)), identity['identity_id']),
         )
         db.commit()
         replace_login(identity, remember=True)
@@ -618,21 +633,22 @@ def finaliser_compte():
             db = get_db()
             try:
                 cursor = db.execute(
-                    'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, NULL, ?)',
+                    'INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, NULL, ?) RETURNING id',
                     (nom, email, role),
                 )
+                utilisateur_id = cursor.fetchone()['id']
                 db.execute(
                     '''INSERT INTO identites_externes
                        (utilisateur_id, provider, provider_subject, email_provider, email_verified)
                        VALUES (?, ?, ?, ?, ?)''',
-                    (cursor.lastrowid, pending['provider'], pending['subject'], pending.get('email'),
-                     int(pending.get('email_verified', False))),
+                    (utilisateur_id, pending['provider'], pending['subject'], pending.get('email'),
+                     bool(pending.get('email_verified', False))),
                 )
                 db.commit()
-            except sqlite3.IntegrityError:
+            except IntegrityError:
                 db.rollback()
                 return external_identity_error('Cette identite est deja associee a un compte.', 409)
-            utilisateur = db.execute('SELECT * FROM utilisateurs WHERE id = ?', (cursor.lastrowid,)).fetchone()
+            utilisateur = db.execute('SELECT * FROM utilisateurs WHERE id = ?', (utilisateur_id,)).fetchone()
             replace_login(utilisateur, remember=True)
             return redirect(url_for('dashboard'))
     return render_template('oauth_finalize.html', pending=pending, error=error)
@@ -664,10 +680,10 @@ def lier_compte_existant():
                        (utilisateur_id, provider, provider_subject, email_provider, email_verified)
                        VALUES (?, ?, ?, ?, ?)''',
                     (utilisateur['id'], pending['provider'], pending['subject'], pending.get('email'),
-                     int(pending.get('email_verified', False))),
+                     bool(pending.get('email_verified', False))),
                 )
                 db.commit()
-            except sqlite3.IntegrityError:
+            except IntegrityError:
                 db.rollback()
                 return external_identity_error('Cette identite est deja associee a un compte.', 409)
             replace_login(utilisateur, remember=True)
@@ -777,7 +793,7 @@ def dashboard_professeur():
     classes = db.execute(
         '''SELECT c.*, COUNT(ce.eleve_id) AS nombre_eleves
            FROM classes c LEFT JOIN classe_eleves ce ON ce.classe_id = c.id
-           WHERE c.professeur_id = ? GROUP BY c.id ORDER BY c.nom''',
+           WHERE c.professeur_id = ? GROUP BY c.id, c.nom ORDER BY c.nom''',
         (current_user.id,),
     ).fetchall()
     devoirs = db.execute(
@@ -786,7 +802,7 @@ def dashboard_professeur():
                   COUNT(CASE WHEN s.fichier_copie IS NOT NULL AND s.note IS NULL THEN 1 END) AS a_corriger
            FROM devoirs d JOIN classes c ON c.id = d.classe_id
            LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.fichier_copie IS NOT NULL
-           WHERE d.professeur_id = ? GROUP BY d.id ORDER BY d.date_ouverture DESC''',
+           WHERE d.professeur_id = ? GROUP BY d.id, c.nom ORDER BY d.date_ouverture DESC''',
         (current_user.id,),
     ).fetchall()
     return render_template(
@@ -842,15 +858,46 @@ def nouveau_devoir():
             datetime.fromisoformat(ouverture)
         except ValueError:
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Date d’ouverture invalide.')
-        dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'sujets')
-        os.makedirs(dossier, exist_ok=True)
-        sujet.save(os.path.join(dossier, nom_sujet))
-        db.execute(
-            '''INSERT INTO devoirs (titre, description, professeur_id, classe_id, sujet_pdf, date_ouverture, duree)
-               VALUES (?, ?, ?, ?, ?, ?, ?)''',
-            (titre, request.form.get('description', '').strip(), current_user.id, classe_id, nom_sujet, ouverture, duree),
-        )
-        db.commit()
+        if not contenu_fichier_valide(sujet, nom_sujet):
+            return render_template(
+                'formulaire.html', type_formulaire='devoir', classes=classes,
+                error='Le type du fichier ne correspond pas a son extension.',
+            )
+        storage_key = None
+        try:
+            inserted = db.execute(
+                '''INSERT INTO devoirs
+                   (titre, description, professeur_id, classe_id, sujet_pdf, date_ouverture, duree)
+                   VALUES (?, ?, ?, ?, NULL, ?, ?) RETURNING id''',
+                (titre, request.form.get('description', '').strip(), current_user.id,
+                 classe_id, ouverture, duree),
+            ).fetchone()
+            devoir_id = inserted['id']
+            storage_key = f'subjects/devoir-{devoir_id}/{nom_sujet}'
+            size = taille_fichier(sujet)
+            get_storage().put(storage_key, sujet.stream, content_type=sujet.mimetype)
+            db.execute('UPDATE devoirs SET sujet_pdf = ? WHERE id = ?', (storage_key, devoir_id))
+            db.execute(
+                '''INSERT INTO fichiers
+                   (storage_key, original_filename, content_type, size, kind, owner_user_id, devoir_id)
+                   VALUES (?, ?, ?, ?, 'SUJET', ?, ?)''',
+                (storage_key, secure_filename(sujet.filename), sujet.mimetype or 'application/octet-stream',
+                 size, current_user.id, devoir_id),
+            )
+            db.commit()
+        except (StorageError, SQLAlchemyError):
+            db.rollback()
+            if storage_key:
+                try:
+                    get_storage().delete(storage_key)
+                except StorageError:
+                    current_app.logger.warning('Objet orphelin possible apres echec DB: %s', storage_key)
+            current_app.logger.exception('Echec de creation du devoir et de son sujet')
+            return render_template(
+                'formulaire.html', type_formulaire='devoir', classes=classes,
+                error="Impossible d'envoyer le fichier pour le moment. Reessayez dans quelques instants.",
+            ), 503
+        flash('Devoir cree.', 'success')
         return redirect(url_for('dashboard_professeur'))
     return render_template('formulaire.html', type_formulaire='devoir', classes=classes)
 
@@ -955,6 +1002,20 @@ def nom_stockage_unique(nom_original):
     return f'{uuid.uuid4().hex}.{extension}'
 
 
+def taille_fichier(upload):
+    position = upload.stream.tell()
+    upload.stream.seek(0, os.SEEK_END)
+    size = upload.stream.tell()
+    upload.stream.seek(position)
+    return size
+
+
+def contenu_fichier_valide(upload, storage_name):
+    extension = storage_name.rsplit('.', 1)[1]
+    content_type = (upload.mimetype or '').lower()
+    return taille_fichier(upload) > 0 and content_type in ALLOWED_CONTENT_TYPES[extension]
+
+
 @app.post('/rendre_copie')
 @login_required
 def rendre_copie():
@@ -978,15 +1039,42 @@ def rendre_copie():
     if nom_fichier is None:
         return 'Format non autorise. Utilisez un PDF, JPG ou PNG.', 400
 
-    dossier = os.path.join(app.config['UPLOAD_FOLDER'], 'copies', str(devoir_id))
-    os.makedirs(dossier, exist_ok=True)
-    copie.save(os.path.join(dossier, nom_fichier))
-    get_db().execute(
-        "UPDATE sessions_examen SET fichier_copie = ?, heure_fin = ?, statut = 'TERMINE' WHERE id = ?",
-        (nom_fichier, utc_now().isoformat(timespec='seconds'), examen['id']),
-    )
-    get_db().commit()
-    return redirect(url_for('copie_deposee'))
+    if not contenu_fichier_valide(copie, nom_fichier):
+        return 'Le type du fichier ne correspond pas a son extension.', 400
+    storage_key = f'copies/devoir-{devoir_id}/eleve-{current_user.id}/{nom_fichier}'
+    previous_key = examen['fichier_copie']
+    db = get_db()
+    try:
+        size = taille_fichier(copie)
+        get_storage().put(storage_key, copie.stream, content_type=copie.mimetype)
+        db.execute(
+            "UPDATE sessions_examen SET fichier_copie = ?, heure_fin = ?, statut = 'TERMINE' WHERE id = ?",
+            (storage_key, utc_now().isoformat(timespec='seconds'), examen['id']),
+        )
+        db.execute('DELETE FROM fichiers WHERE session_id = ? AND kind = ?', (examen['id'], 'COPIE'))
+        db.execute(
+            '''INSERT INTO fichiers
+               (storage_key, original_filename, content_type, size, kind, owner_user_id, devoir_id, session_id)
+               VALUES (?, ?, ?, ?, 'COPIE', ?, ?, ?)''',
+            (storage_key, secure_filename(copie.filename), copie.mimetype or 'application/octet-stream',
+             size, current_user.id, devoir_id, examen['id']),
+        )
+        db.commit()
+    except (StorageError, SQLAlchemyError):
+        db.rollback()
+        try:
+            get_storage().delete(storage_key)
+        except StorageError:
+            current_app.logger.warning('Objet orphelin possible apres echec DB: %s', storage_key)
+        current_app.logger.exception('Echec de depot de copie')
+        return "Impossible d'envoyer le fichier pour le moment. Reessayez dans quelques instants.", 503
+    if previous_key and previous_key != storage_key:
+        try:
+            get_storage().delete(normaliser_cle_legacy(previous_key, 'copies', devoir_id))
+        except StorageError:
+            current_app.logger.warning('Ancienne copie non supprimee: %s', previous_key)
+    flash('Copie envoyee.', 'success')
+    return redirect(url_for('dashboard_eleve'))
 
 
 @app.get('/copie-deposee')
@@ -998,26 +1086,50 @@ def copie_deposee():
 @app.get('/uploads/<path:nom_fichier>')
 @login_required
 def telecharger_fichier(nom_fichier):
-    parties = nom_fichier.replace('\\', '/').split('/')
-    if len(parties) == 2 and parties[0] == 'sujets':
+    storage_key = nom_fichier.replace('\\', '/').lstrip('/')
+    if '..' in storage_key.split('/'):
+        abort(404)
+    if storage_key.startswith('subjects/'):
         if current_user.role == 'PROFESSEUR':
             autorise = get_db().execute(
                 'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
-                (parties[1], current_user.id),
+                (storage_key, current_user.id),
             ).fetchone() is not None
         else:
             autorise = get_db().execute(
                 '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
                    WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
-                (parties[1], current_user.id),
+                (storage_key, current_user.id),
             ).fetchone() is not None
-    elif len(parties) == 3 and parties[0] == 'copies' and parties[1].isdigit():
+    elif storage_key.startswith('sujets/') and len(storage_key.split('/')) == 2:
+        legacy_name = storage_key.split('/')[1]
+        if current_user.role == 'PROFESSEUR':
+            autorise = get_db().execute(
+                'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
+                (legacy_name, current_user.id),
+            ).fetchone() is not None
+        else:
+            autorise = get_db().execute(
+                '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
+                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
+                (legacy_name, current_user.id),
+            ).fetchone() is not None
+    elif storage_key.startswith('copies/'):
         copie = get_db().execute(
             '''SELECT s.eleve_id, d.professeur_id FROM sessions_examen s
                JOIN devoirs d ON d.id = s.devoir_id
-               WHERE s.devoir_id = ? AND s.fichier_copie = ?''',
-            (int(parties[1]), parties[2]),
+               WHERE s.fichier_copie = ?''',
+            (storage_key,),
         ).fetchone()
+        if copie is None:
+            legacy_parts = storage_key.split('/')
+            if len(legacy_parts) == 3 and legacy_parts[1].isdigit():
+                copie = get_db().execute(
+                    '''SELECT s.eleve_id, d.professeur_id FROM sessions_examen s
+                       JOIN devoirs d ON d.id = s.devoir_id
+                       WHERE s.devoir_id = ? AND s.fichier_copie = ?''',
+                    (int(legacy_parts[1]), legacy_parts[2]),
+                ).fetchone()
         if copie is None:
             abort(404)
         autorise = (
@@ -1031,7 +1143,63 @@ def telecharger_fichier(nom_fichier):
         abort(404)
     if not autorise:
         abort(403)
-    return send_from_directory(app.config['UPLOAD_FOLDER'], nom_fichier)
+    metadata = get_db().execute(
+        'SELECT original_filename, content_type FROM fichiers WHERE storage_key = ?',
+        (storage_key,),
+    ).fetchone()
+    try:
+        return get_storage().response(
+            storage_key,
+            download_name=metadata['original_filename'] if metadata else os.path.basename(storage_key),
+            content_type=metadata['content_type'] if metadata else mimetypes.guess_type(storage_key)[0],
+        )
+    except FileNotFoundError:
+        abort(404)
+    except StorageError:
+        current_app.logger.exception('Stockage indisponible pendant un telechargement')
+        return 'Fichier temporairement indisponible.', 503
+
+
+def normaliser_cle_legacy(key, kind, devoir_id=None):
+    if '/' in key:
+        return key
+    if kind == 'copies':
+        return f'copies/{devoir_id}/{key}'
+    return f'sujets/{key}'
+
+
+@app.get('/health')
+def health():
+    if database_ping(app.config):
+        return {'status': 'ok', 'database': 'ok'}
+    return {'status': 'error', 'database': 'unavailable'}, 503
+
+
+@app.get('/ready')
+def ready():
+    database_ok = database_ping(app.config)
+    storage_configured = (
+        app.config['STORAGE_BACKEND'] == 'local'
+        or not required_r2_values(app.config)
+    )
+    status = 200 if database_ok and storage_configured else 503
+    return {
+        'status': 'ready' if status == 200 else 'not_ready',
+        'database': 'ok' if database_ok else 'unavailable',
+        'storage': 'configured' if storage_configured else 'misconfigured',
+    }, status
+
+
+@app.after_request
+def disable_private_response_caching(response):
+    private_prefixes = (
+        '/connexion', '/inscription', '/auth/', '/dashboard', '/eleve',
+        '/professeur', '/devoir/', '/uploads/', '/mon-compte', '/rendre_copie',
+    )
+    if current_user.is_authenticated or request.path.startswith(private_prefixes):
+        response.headers['Cache-Control'] = 'no-store, private'
+        response.headers['Pragma'] = 'no-cache'
+    return response
 
 
 if __name__ == '__main__':

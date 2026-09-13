@@ -1,4 +1,6 @@
--- Reinitialise les tables lors de la commande flask init-db.
+-- Schema SQLite historique. La source de verite versionnee est desormais
+-- models.py + migrations/. `flask init-db` utilise SQLAlchemy.
+DROP TABLE IF EXISTS fichiers;
 DROP TABLE IF EXISTS sessions_examen;
 DROP TABLE IF EXISTS devoirs;
 DROP TABLE IF EXISTS classe_eleves;
@@ -71,4 +73,22 @@ CREATE TABLE sessions_examen (
     FOREIGN KEY (eleve_id) REFERENCES utilisateurs(id),
     FOREIGN KEY (devoir_id) REFERENCES devoirs(id),
     UNIQUE (eleve_id, devoir_id)
+);
+
+CREATE TABLE fichiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    storage_key TEXT UNIQUE NOT NULL,
+    original_filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    kind TEXT CHECK(kind IN ('SUJET', 'COPIE', 'CORRECTION', 'PHOTO')) NOT NULL,
+    owner_user_id INTEGER,
+    devoir_id INTEGER,
+    session_id INTEGER,
+    photo_index INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (owner_user_id) REFERENCES utilisateurs(id),
+    FOREIGN KEY (devoir_id) REFERENCES devoirs(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions_examen(id) ON DELETE CASCADE,
+    UNIQUE (session_id, photo_index)
 );

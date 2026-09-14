@@ -27,6 +27,21 @@ def test_manifest_is_accessible_and_valid(client):
     assert "standalone" in manifest["display_override"]
 
 
+def test_sitemap_lists_public_pages_only(client):
+    response = client.get("/sitemap.xml")
+    try:
+        body = response.get_data(as_text=True)
+        assert response.status_code == 200
+        assert response.content_type.startswith("application/xml")
+        assert "http://localhost/" in body
+        assert "http://localhost/connexion" in body
+        assert "http://localhost/inscription" in body
+        assert "/dashboard" not in body
+        assert "/uploads/" not in body
+    finally:
+        response.close()
+
+
 def test_manifest_has_required_install_icons():
     manifest = json.loads((ROOT / "static" / "manifest.webmanifest").read_text(encoding="utf-8"))
     icons = {icon["sizes"]: icon for icon in manifest["icons"] if icon["purpose"] == "any"}

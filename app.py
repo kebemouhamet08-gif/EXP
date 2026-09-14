@@ -366,6 +366,26 @@ def accueil():
     return render_template('home.html')
 
 
+@app.get('/sitemap.xml')
+def sitemap():
+    public_urls = (
+        ('accueil', '1.0'),
+        ('connexion', '0.5'),
+        ('inscription', '0.8'),
+    )
+    entries = ''.join(
+        f'    <url><loc>{url_for(endpoint, _external=True)}</loc><priority>{priority}</priority></url>\n'
+        for endpoint, priority in public_urls
+    )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f'{entries}'
+        '</urlset>\n'
+    )
+    return document, 200, {'Content-Type': 'application/xml; charset=utf-8'}
+
+
 @app.get('/googleb25bfaa0abbca861.html')
 def google_site_verification():
     return send_from_directory(app.root_path, 'googleb25bfaa0abbca861.html')

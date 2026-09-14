@@ -16,8 +16,8 @@
   <div class="method-row"><div><strong>{{ '✓' if utilisateur.mot_de_passe_hash else '○' }} Mot de passe ClasseXP</strong></div></div>
   {% for provider in providers %}
   <div class="method-row"><div><strong>{{ '✓' if provider.id in linked else '○' }} {{ provider.label }}</strong><small>{{ 'Lié' if provider.id in linked else ('Disponible' if provider.configured else 'Non configuré') }}</small></div>
-    {% if provider.id in linked %}<form method="post" action="{{ url_for('delier_fournisseur', provider=provider.id) }}"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-compact" type="submit">Délier</button></form>
-    {% elif provider.configured %}<a class="button button-secondary button-compact" href="{{ url_for('external_login', provider=provider.id, link=1) }}">Lier</a>{% endif %}
+    {% if provider.id in linked %}<form method="post" action="{{ url_for('delier_fournisseur', provider=provider.id) }}" data-action-feedback><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-compact" type="submit" data-loading-text="Dissociation…">Délier</button></form>
+    {% elif provider.configured %}<a class="button button-secondary button-compact" href="{{ url_for('external_login', provider=provider.id, link=1) }}" data-oauth-provider="{{ provider.label }}" data-loading-text="Ouverture de {{ provider.label }}…">Lier</a>{% endif %}
   </div>
   {% endfor %}
 </section>

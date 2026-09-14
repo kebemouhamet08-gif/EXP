@@ -402,12 +402,15 @@ def inscription():
         role = request.form.get('role', 'ELEVE')
 
         if not nom or not email or len(mot_de_passe) < 8:
+            flash('Vérifiez les champs. Le mot de passe doit contenir 8 caractères minimum.', 'error')
             return render_template('auth.html', mode='inscription', error='Remplissez tous les champs. Le mot de passe doit contenir 8 caracteres minimum.')
         if role not in {'ELEVE', 'PROFESSEUR'}:
+            flash('Le rôle sélectionné est invalide.', 'error')
             return render_template('auth.html', mode='inscription', error='Role invalide.')
 
         db = get_db()
         if db.execute('SELECT 1 FROM utilisateurs WHERE email = ?', (email,)).fetchone() is not None:
+            flash('Un compte existe déjà avec cette adresse e-mail.', 'error')
             return render_template(
                 'auth.html', mode='inscription', compte_existant=True,
                 error='Un compte existe deja avec cette adresse email.',
@@ -426,12 +429,14 @@ def inscription():
                 raise SQLAlchemyError('Le compte n\'a pas ete persiste.')
         except IntegrityError:
             db.rollback()
+            flash('Un compte existe déjà avec cette adresse e-mail.', 'error')
             return render_template(
                 'auth.html', mode='inscription', compte_existant=True,
                 error='Un compte existe deja avec cette adresse email.',
             )
         except SQLAlchemyError:
             db.rollback()
+            flash('Impossible de créer le compte. Veuillez réessayer.', 'error')
             return render_template(
                 'auth.html', mode='inscription',
                 error='Impossible de creer le compte. Verifiez les donnees puis reessayez.',
@@ -459,6 +464,7 @@ def connexion():
         ).fetchone()
         if (utilisateur is None or not utilisateur['mot_de_passe_hash']
                 or not check_password_hash(utilisateur['mot_de_passe_hash'], mot_de_passe)):
+            flash('Adresse e-mail ou mot de passe incorrect.', 'error')
             return render_template(
                 'auth.html', mode='connexion', error='Email ou mot de passe incorrect.',
                 providers=provider_status(), switch_mode=request.args.get('switch') == '1',
@@ -466,6 +472,7 @@ def connexion():
 
         remember = bool(request.form.get('remember'))
         replace_login(utilisateur, remember=remember)
+        flash('Connexion réussie.', 'success')
         return redirect(url_for('dashboard'))
 
     return render_template(
@@ -533,7 +540,21 @@ def exchange_external_profile(provider):
     }
 
 
+def action_error(message, status, *, category='error'):
+    """Render an actionable error without changing the HTTP status."""
+    flash(message, category)
+    retry_url = (
+        request.referrer
+        if request.referrer and request.referrer.startswith(request.host_url)
+        else url_for('dashboard' if current_user.is_authenticated else 'accueil')
+    )
+    return render_template(
+        'feedback_error.html', message=message, category=category, retry_url=retry_url,
+    ), status
+
+
 def external_identity_error(message, status=400):
+    flash(message, 'error')
     return render_template('oauth_error.html', message=message), status
 
 
@@ -573,6 +594,10 @@ def external_callback(provider):
     if provider not in PROVIDERS:
         abort(404)
     if not request.values.get('code'):
+        if request.values.get('error') in {'access_denied', 'user_cancelled_authorize'}:
+            return external_identity_error(
+                f"Connexion {PROVIDERS[provider]['label']} annulée."
+            )
         return external_identity_error('Le fournisseur n\'a retourne aucun code d\'autorisation.')
     try:
         profile = exchange_external_profile(provider)
@@ -606,6 +631,7 @@ def external_callback(provider):
                  bool(profile.get('email_verified', False))),
             )
             db.commit()
+        flash(f"Compte {PROVIDERS[provider]['label']} associé.", 'success')
         return redirect(url_for('mon_compte'))
 
     if identity is not None:
@@ -616,6 +642,7 @@ def external_callback(provider):
         )
         db.commit()
         replace_login(identity, remember=True)
+        flash(f"Compte {PROVIDERS[provider]['label']} connecté.", 'success')
         return redirect(url_for('dashboard'))
 
     session['pending_external_identity'] = profile
@@ -675,7 +702,10 @@ def finaliser_compte():
                 return external_identity_error('Cette identite est deja associee a un compte.', 409)
             utilisateur = db.execute('SELECT * FROM utilisateurs WHERE id = ?', (utilisateur_id,)).fetchone()
             replace_login(utilisateur, remember=True)
+            flash(f"Compte {PROVIDERS[pending['provider']]['label']} connecté.", 'success')
             return redirect(url_for('dashboard'))
+        if error:
+            flash(error, 'error')
     return render_template('oauth_finalize.html', pending=pending, error=error)
 
 
@@ -712,7 +742,10 @@ def lier_compte_existant():
                 db.rollback()
                 return external_identity_error('Cette identite est deja associee a un compte.', 409)
             replace_login(utilisateur, remember=True)
+            flash(f"Compte {PROVIDERS[pending['provider']]['label']} associé.", 'success')
             return redirect(url_for('mon_compte'))
+        if error:
+            flash(error, 'error')
     return render_template('oauth_link_existing.html', pending=pending, error=error)
 
 
@@ -749,6 +782,7 @@ def delier_fournisseur(provider):
         (current_user.id, provider),
     )
     db.commit()
+    flash(f"Compte {PROVIDERS[provider]['label']} dissocié.", 'success')
     return redirect(url_for('mon_compte'))
 
 
@@ -842,11 +876,13 @@ def nouvelle_classe():
     if request.method == 'POST':
         nom = request.form.get('nom', '').strip()
         if not nom:
+            flash('Le nom de la classe est obligatoire.', 'error')
             return render_template('formulaire.html', type_formulaire='classe', error='Le nom est obligatoire.')
         code = secrets.token_hex(3).upper()
         db = get_db()
         db.execute('INSERT INTO classes (nom, professeur_id, code) VALUES (?, ?, ?)', (nom, current_user.id, code))
         db.commit()
+        flash('Classe créée.', 'success')
         return redirect(url_for('dashboard_professeur'))
     return render_template('formulaire.html', type_formulaire='classe')
 
@@ -857,10 +893,11 @@ def rejoindre_classe():
     code = ''.join(char for char in request.form.get('code', '').upper() if char.isalnum())
     classe = get_db().execute('SELECT id FROM classes WHERE code = ?', (code,)).fetchone()
     if classe is None:
-        return 'Code de classe invalide. Vérifiez le code transmis par le professeur.', 404
+        return action_error('Code de classe invalide. Vérifiez le code transmis par le professeur.', 404)
     db = get_db()
     db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], current_user.id))
     db.commit()
+    flash('Classe rejointe.', 'success')
     return redirect(url_for('dashboard_eleve'))
 
 
@@ -878,12 +915,15 @@ def nouveau_devoir():
         nom_sujet = nom_stockage_unique(sujet.filename) if sujet is not None else None
         classe = db.execute('SELECT id FROM classes WHERE id = ? AND professeur_id = ?', (classe_id, current_user.id)).fetchone()
         if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or nom_sujet is None:
+            flash('Vérifiez les informations obligatoires du devoir.', 'error')
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Tous les champs sont obligatoires. La duree minimale est de 60 secondes.')
         try:
             datetime.fromisoformat(ouverture)
         except ValueError:
+            flash('La date d’ouverture est invalide.', 'error')
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Date d’ouverture invalide.')
         if not contenu_fichier_valide(sujet, nom_sujet):
+            flash('Le fichier du sujet n’est pas autorisé.', 'error')
             return render_template(
                 'formulaire.html', type_formulaire='devoir', classes=classes,
                 error='Le type du fichier ne correspond pas a son extension.',
@@ -918,11 +958,12 @@ def nouveau_devoir():
                 except StorageError:
                     current_app.logger.warning('Objet orphelin possible apres echec DB: %s', storage_key)
             current_app.logger.exception('Echec de creation du devoir et de son sujet')
+            flash("Impossible d’envoyer le sujet. Vos données n’ont pas été enregistrées.", 'error')
             return render_template(
                 'formulaire.html', type_formulaire='devoir', classes=classes,
                 error="Impossible d'envoyer le fichier pour le moment. Reessayez dans quelques instants.",
             ), 503
-        flash('Devoir cree.', 'success')
+        flash('Devoir publié.', 'success')
         return redirect(url_for('dashboard_professeur'))
     return render_template('formulaire.html', type_formulaire='devoir', classes=classes)
 
@@ -954,7 +995,7 @@ def noter_copie(session_id):
         if not 0 <= note <= 20:
             raise ValueError
     except ValueError:
-        return 'La note doit etre comprise entre 0 et 20.', 400
+        return action_error('La note doit être comprise entre 0 et 20.', 400)
     db = get_db()
     examen = db.execute(
         '''SELECT s.id FROM sessions_examen s JOIN devoirs d ON d.id = s.devoir_id
@@ -962,9 +1003,10 @@ def noter_copie(session_id):
         (session_id, current_user.id),
     ).fetchone()
     if examen is None:
-        return 'Copie introuvable.', 404
+        return action_error('Copie introuvable.', 404)
     db.execute('UPDATE sessions_examen SET note = ?, commentaire = ? WHERE id = ?', (note, request.form.get('commentaire', '').strip(), session_id))
     db.commit()
+    flash('Note enregistrée.', 'success')
     return redirect(request.referrer or url_for('dashboard_professeur'))
 
 
@@ -983,17 +1025,18 @@ def devoir_accessible(devoir_id):
 def commencer_devoir(devoir_id):
     devoir = devoir_accessible(devoir_id)
     if devoir is None:
-        return 'Devoir introuvable.', 404
+        return action_error('Devoir introuvable.', 404)
     maintenant = utc_now()
     ouverture = datetime.fromisoformat(devoir['date_ouverture'])
     if maintenant < ouverture:
-        return 'Ce devoir n’est pas encore ouvert.', 403
+        return action_error('Ce devoir n’est pas encore ouvert.', 403, category='warning')
     db = get_db()
     db.execute(
         'INSERT OR IGNORE INTO sessions_examen (eleve_id, devoir_id, heure_debut) VALUES (?, ?, ?)',
         (current_user.id, devoir_id, maintenant.isoformat(timespec='seconds')),
     )
     db.commit()
+    flash('Le devoir est ouvert.', 'info')
     return redirect(url_for('voir_devoir', devoir_id=devoir_id))
 
 
@@ -1046,26 +1089,26 @@ def contenu_fichier_valide(upload, storage_name):
 def rendre_copie():
     devoir_id = request.form.get('devoir_id', type=int)
     if devoir_id is None:
-        return 'Devoir invalide.', 400
+        return action_error('Devoir invalide.', 400)
     devoir = devoir_accessible(devoir_id)
     examen = get_db().execute(
         'SELECT * FROM sessions_examen WHERE eleve_id = ? AND devoir_id = ?',
         (current_user.id, devoir_id),
     ).fetchone()
     if devoir is None or examen is None:
-        return 'Session invalide.', 403
+        return action_error('Session invalide.', 403)
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
     if utc_now() >= fin:
-        return 'Le temps est ecoule.', 403
+        return action_error('Le temps est écoulé.', 403, category='warning')
     copie = request.files.get('copie')
     if copie is None or not copie.filename:
-        return 'Aucun fichier selectionne.', 400
+        return action_error('Aucun fichier sélectionné.', 400)
     nom_fichier = nom_stockage_unique(copie.filename)
     if nom_fichier is None:
-        return 'Format non autorise. Utilisez un PDF, JPG ou PNG.', 400
+        return action_error('Format non autorisé. Utilisez un PDF, DOCX, JPG ou PNG.', 400)
 
     if not contenu_fichier_valide(copie, nom_fichier):
-        return 'Le type du fichier ne correspond pas a son extension.', 400
+        return action_error('Le type du fichier ne correspond pas à son extension.', 400)
     storage_key = f'copies/devoir-{devoir_id}/eleve-{current_user.id}/{nom_fichier}'
     previous_key = examen['fichier_copie']
     db = get_db()
@@ -1092,13 +1135,16 @@ def rendre_copie():
         except StorageError:
             current_app.logger.warning('Objet orphelin possible apres echec DB: %s', storage_key)
         current_app.logger.exception('Echec de depot de copie')
-        return "Impossible d'envoyer le fichier pour le moment. Reessayez dans quelques instants.", 503
+        return action_error(
+            "Impossible d’envoyer la copie. Vos données n’ont pas été envoyées. Veuillez réessayer.",
+            503,
+        )
     if previous_key and previous_key != storage_key:
         try:
             get_storage().delete(normaliser_cle_legacy(previous_key, 'copies', devoir_id))
         except StorageError:
             current_app.logger.warning('Ancienne copie non supprimee: %s', previous_key)
-    flash('Copie envoyee.', 'success')
+    flash('Copie envoyée avec succès.', 'success')
     return redirect(url_for('dashboard_eleve'))
 
 
@@ -1213,6 +1259,20 @@ def ready():
         'database': 'ok' if database_ok else 'unavailable',
         'storage': 'configured' if storage_configured else 'misconfigured',
     }, status
+
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    current_app.logger.error('Erreur serveur non geree: %s', error)
+    message = (
+        "Une erreur est survenue. Vos données n’ont pas été envoyées. "
+        "Veuillez réessayer."
+    )
+    flash(message, 'error')
+    retry_url = url_for('dashboard' if current_user.is_authenticated else 'accueil')
+    return render_template(
+        'feedback_error.html', message=message, category='error', retry_url=retry_url,
+    ), 500
 
 
 @app.after_request

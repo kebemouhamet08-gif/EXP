@@ -78,7 +78,7 @@
             {% if devoir['note'] is not none %}<span class="grade-value">{{ devoir['note']|round(2) }}<small>/20</small></span>
             {% elif devoir['statut'] == 'TERMINE' %}<span class="badge badge-success">Copie remise</span>
             {% elif devoir['commence'] %}<a class="button button-primary button-compact" href="{{ url_for('voir_devoir', devoir_id=devoir['id']) }}">Continuer {{ icon('arrow') }}</a>
-            {% else %}<form method="post" action="{{ url_for('commencer_devoir', devoir_id=devoir['id']) }}"><button class="button button-primary button-compact" type="submit">Commencer {{ icon('arrow') }}</button></form>{% endif %}
+            {% else %}<form method="post" action="{{ url_for('commencer_devoir', devoir_id=devoir['id']) }}" data-action-feedback><button class="button button-primary button-compact" type="submit" data-loading-text="Ouverture…">Commencer {{ icon('arrow') }}</button></form>{% endif %}
           </div>
           {% if devoir['commentaire'] %}<p class="teacher-feedback"><strong>Commentaire :</strong> {{ devoir['commentaire'] }}</p>{% endif %}
         </article>
@@ -86,7 +86,7 @@
     </section>
 
     <aside class="student-aside">
-      <section class="panel join-panel"><span class="panel-icon stat-green">{{ icon('classes') }}</span><h2>Rejoindre une classe</h2><p>Vous avez un code d’invitation ? Rejoignez votre nouvelle classe en quelques secondes.</p><form method="post" action="{{ url_for('rejoindre_classe') }}"><label class="sr-only" for="code">Code d’invitation</label><input class="form-input code-input" id="code" name="code" placeholder="Entrez le code (ex. ABC123)" maxlength="10" autocomplete="off" required><button class="button button-primary button-block" type="submit">Rejoindre la classe</button></form></section>
+      <section class="panel join-panel"><span class="panel-icon stat-green">{{ icon('classes') }}</span><h2>Rejoindre une classe</h2><p>Vous avez un code d’invitation ? Rejoignez votre nouvelle classe en quelques secondes.</p><form method="post" action="{{ url_for('rejoindre_classe') }}" data-action-feedback><label class="sr-only" for="code">Code d’invitation</label><input class="form-input code-input" id="code" name="code" placeholder="Entrez le code (ex. ABC123)" maxlength="10" autocomplete="off" required><button class="button button-primary button-block" type="submit" data-loading-text="Association…">Rejoindre la classe</button></form></section>
       <section class="progress-note"><span aria-hidden="true">🏆</span><div><h2>Vous progressez !</h2><p>Chaque devoir rendu est un pas de plus vers vos objectifs.</p></div></section>
     </aside>
   </div>

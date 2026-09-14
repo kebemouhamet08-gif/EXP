@@ -1,4 +1,4 @@
-const CACHE_NAME = 'classexp-static-v1';
+const CACHE_NAME = 'classexp-static-v4';
 const OFFLINE_URL = '/static/offline.html';
 const CACHEABLE_DESTINATIONS = new Set(['style', 'script', 'image', 'font']);
 const PRECACHE_URLS = [

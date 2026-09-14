@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Action impossible · ClasseXP{% endblock %}
+{% block content %}
+<section class="panel feedback-error-page" aria-labelledby="feedback-error-title">
+  <span class="feedback-error-icon" aria-hidden="true">×</span>
+  <p class="eyebrow">Action non effectuée</p>
+  <h1 id="feedback-error-title">Une erreur est survenue.</h1>
+  <p>{{ message }}</p>
+  <a class="button button-primary" href="{{ retry_url }}">Réessayer</a>
+</section>
+{% endblock %}
+{% block public_content %}
+<section class="auth-layout auth-layout--single">
+  <div class="card auth-card feedback-error-page" aria-labelledby="feedback-error-title-public">
+    <span class="feedback-error-icon" aria-hidden="true">×</span>
+    <p class="eyebrow">Action non effectuée</p>
+    <h1 id="feedback-error-title-public">Une erreur est survenue.</h1>
+    <p>{{ message }}</p>
+    <a class="button button-primary button-block" href="{{ retry_url }}">Réessayer</a>
+  </div>
+</section>
+{% endblock %}

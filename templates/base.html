@@ -91,7 +91,20 @@
   {% else %}
     <main id="main-content">{% block public_content %}{% endblock %}</main>
   {% endif %}
-  <div class="toast" data-toast role="status" aria-live="polite"></div>
+  <div class="toast-region" data-toast-region aria-label="Notifications">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        {% set kind = category if category in ['success', 'error', 'warning', 'info'] else 'info' %}
+        <article class="toast toast--{{ kind }} is-visible" data-toast data-auto-dismiss
+                 role="{{ 'alert' if kind == 'error' else 'status' }}"
+                 aria-live="{{ 'assertive' if kind == 'error' else 'polite' }}" aria-atomic="true">
+          <span class="toast-icon" aria-hidden="true"><span>{{ {'success': '✓', 'error': '×', 'warning': '!', 'info': 'i'}[kind] }}</span></span>
+          <p>{{ message }}</p>
+          <button class="toast-close" type="button" data-toast-close aria-label="Fermer la notification">×</button>
+        </article>
+      {% endfor %}
+    {% endwith %}
+  </div>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>

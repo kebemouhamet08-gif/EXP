@@ -5,11 +5,11 @@
   <p class="eyebrow">Sécurité du compte</p><h1>Un compte ClasseXP utilise déjà cette adresse</h1>
   <p>Pour éviter toute prise de contrôle, confirmez le mot de passe du compte <strong>{{ pending.email }}</strong>. Aucune liaison n’est faite automatiquement.</p>
   {% if error %}<div class="alert alert-error" role="alert"><span aria-hidden="true">!</span><p>{{ error }}</p></div>{% endif %}
-  <form method="post" class="form-stack">
+  <form method="post" class="form-stack" data-action-feedback>
     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <div class="form-field"><label class="form-label" for="mot_de_passe">Mot de passe ClasseXP</label><input class="form-input" id="mot_de_passe" type="password" name="mot_de_passe" required autocomplete="current-password"></div>
     <label class="remember-option"><input type="checkbox" name="confirm_link" value="1" required><span aria-hidden="true"></span>Je confirme la liaison avec {{ pending.provider|capitalize }}</label>
-    <button class="button button-primary button-block" type="submit">Vérifier et lier</button>
+    <button class="button button-primary button-block" type="submit" data-loading-text="Vérification…">Vérifier et lier</button>
   </form>
 </div></section>
 {% endblock %}

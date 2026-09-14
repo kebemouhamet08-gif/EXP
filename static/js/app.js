@@ -4,6 +4,62 @@
   const menuToggle = document.querySelector('[data-menu-toggle]');
   const toast = document.querySelector('[data-toast]');
 
+  const standaloneQuery = window.matchMedia('(display-mode: standalone)');
+  const isStandalone = () => standaloneQuery.matches || window.navigator.standalone === true;
+  document.documentElement.classList.toggle('is-standalone', isStandalone());
+
+  if (navigator.windowControlsOverlay) {
+    const updateWindowControlsOverlay = () => {
+      document.documentElement.classList.toggle(
+        'has-window-controls-overlay', navigator.windowControlsOverlay.visible,
+      );
+    };
+    updateWindowControlsOverlay();
+    navigator.windowControlsOverlay.addEventListener('geometrychange', updateWindowControlsOverlay);
+  }
+
+  let deferredInstallPrompt = null;
+  const installSection = document.querySelector('[data-install-section]');
+  const installButton = document.querySelector('[data-install-app]');
+  const iosInstallHint = document.querySelector('[data-ios-install-hint]');
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  const updateInstallUi = () => {
+    const installed = isStandalone();
+    document.documentElement.classList.toggle('is-standalone', installed);
+    if (installSection) installSection.hidden = installed || (!deferredInstallPrompt && !isIos);
+    if (installButton) installButton.hidden = installed || !deferredInstallPrompt;
+    if (iosInstallHint) iosInstallHint.hidden = installed || !isIos || Boolean(deferredInstallPrompt);
+  };
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    updateInstallUi();
+  });
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    updateInstallUi();
+  });
+  standaloneQuery.addEventListener?.('change', updateInstallUi);
+  installButton?.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    updateInstallUi();
+  });
+  updateInstallUi();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/static/sw.js', { scope: '/' }).catch(() => {
+        // ClasseXP remains fully usable when service workers are unavailable.
+      });
+    });
+  }
+
   let toastTimeout;
   const showToast = (message) => {
     if (!toast) return;

@@ -20,5 +20,5 @@
 {%- endmacro %}
 
 {% macro logo() -%}
-<span class="brand-cap" aria-hidden="true"><svg viewBox="0 0 52 42" focusable="false"><path class="cap-top" d="M2 14 26 2l24 12-24 12L2 14Z"/><path class="cap-band" d="M12 20v10c7 7 21 7 28 0V20l-14 7-14-7Z"/><path class="cap-tassel" d="M47 16v13"/><circle class="cap-tassel" cx="47" cy="32" r="2"/></svg></span><span class="brand-word">Classe<span>XP</span></span>
+<span class="brand-cap" aria-hidden="true"><img src="{{ url_for('static', filename='favicon.svg') }}" alt=""></span><span class="brand-word">Classe<span>XP</span></span>
 {%- endmacro %}

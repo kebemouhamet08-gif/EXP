@@ -24,7 +24,7 @@
 
 * { box-sizing: border-box; }
 html { min-width: 320px; scroll-behavior: smooth; background: var(--bg-main); }
-body { min-height: 100vh; margin: 0; overflow-x: hidden; color: var(--text-main); background: var(--bg-main); }
+body { min-height: 100vh; min-height: 100dvh; margin: 0; overflow-x: hidden; color: var(--text-main); background: var(--bg-main); }
 body::before { position: fixed; inset: 0; z-index: -2; content: ""; pointer-events: none; background: radial-gradient(circle at 72% 0, rgba(31, 95, 218, .25), transparent 34rem), radial-gradient(circle at 98% 68%, rgba(74, 62, 214, .1), transparent 30rem), linear-gradient(145deg, #07111f, #081426 58%, #06101e); }
 a { color: inherit; }
 button, input, select, textarea { font: inherit; }
@@ -49,7 +49,7 @@ p { color: var(--text-secondary); line-height: 1.55; }
 .app-topbar { position: sticky; top: 0; grid-template-columns: 260px minmax(280px, 500px) 1fr; gap: 1.5rem; }
 .brand { display: inline-flex; width: fit-content; align-items: center; gap: .7rem; font-size: 1.55rem; font-weight: 800; letter-spacing: -.04em; text-decoration: none; }
 .brand-cap { display: inline-flex; width: 42px; flex: 0 0 auto; }
-.brand-cap svg { width: 100%; overflow: visible; }
+.brand-cap svg, .brand-cap img { display: block; width: 100%; overflow: visible; }
 .cap-top, .cap-band { fill: #79a7ff; }
 .cap-band { opacity: .82; }
 .cap-tassel { fill: none; stroke: #a5c2ff; stroke-width: 2; }
@@ -141,8 +141,8 @@ p { color: var(--text-secondary); line-height: 1.55; }
 .feature-violet, .stat-violet { background: linear-gradient(145deg, #7554e9, #4b2cad); }.feature-green, .stat-green { background: linear-gradient(145deg, #30b79b, #168a79); }.feature-indigo, .stat-indigo { background: linear-gradient(145deg, #4969f2, #3438bb); }.stat-orange { background: linear-gradient(145deg, #ef8a4b, #b94f26); }
 
 /* Application shell */
-.app-shell { display: grid; min-height: calc(100vh - 74px); grid-template-columns: 242px minmax(0, 1fr); }
-.sidebar { position: sticky; top: 74px; display: flex; height: calc(100vh - 74px); flex-direction: column; padding: 1.6rem .9rem 1rem; border-right: 1px solid var(--border); background: rgba(5,16,32,.58); backdrop-filter: blur(15px); }
+.app-shell { display: grid; min-height: calc(100vh - 74px); min-height: calc(100dvh - 74px); grid-template-columns: 242px minmax(0, 1fr); }
+.sidebar { position: sticky; top: 74px; display: flex; height: calc(100vh - 74px); height: calc(100dvh - 74px); flex-direction: column; padding: 1.6rem .9rem 1rem; border-right: 1px solid var(--border); background: rgba(5,16,32,.58); backdrop-filter: blur(15px); }
 .sidebar nav { display: grid; gap: .28rem; }
 .sidebar-item { display: flex; min-height: 48px; align-items: center; gap: .8rem; padding: .7rem .85rem; border-radius: 10px; color: var(--text-secondary); font-size: .84rem; text-decoration: none; transition: color 180ms ease, background 180ms ease; }
 .sidebar-item svg { width: 1.3rem; height: 1.3rem; color: #9db9ff; }
@@ -157,6 +157,7 @@ p { color: var(--text-secondary); line-height: 1.55; }
 .sidebar-card strong { display: block; font-size: .75rem; line-height: 1.45; }.sidebar-card strong span { color: var(--primary); }.sidebar-card p { margin: .5rem 0 0; font-size: .64rem; }
 .mobile-logout { display: none; }
 .sidebar-backdrop { display: none; }
+.bottom-nav { display: none; }
 .main-content { width: 100%; max-width: 1480px; padding: 2.2rem clamp(1.4rem, 3vw, 3rem) 4rem; }
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 2rem; margin-bottom: 1.4rem; }
 .page-header h1 { margin-bottom: .5rem; font-size: clamp(2.15rem, 3.4vw, 3.25rem); }.page-header p:last-child { margin-bottom: 0; font-size: .96rem; }
@@ -197,7 +198,7 @@ p { color: var(--text-secondary); line-height: 1.55; }
 .student-class-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .75rem; }.student-class-card { display: flex; align-items: center; gap: .75rem; padding: .85rem; }.student-class-card h3 { margin-bottom: .12rem; }.student-class-card p { margin: 0; font-size: .65rem; }
 
 /* Forms and authentication */
-.auth-layout { display: grid; min-height: calc(100vh - 74px); grid-template-columns: minmax(0, 1fr) minmax(360px, 470px); align-items: center; gap: clamp(3rem, 8vw, 9rem); padding: 3rem clamp(1.5rem, 8vw, 9rem); }
+.auth-layout { display: grid; min-height: calc(100vh - 74px); min-height: calc(100dvh - 74px); grid-template-columns: minmax(0, 1fr) minmax(360px, 470px); align-items: center; gap: clamp(3rem, 8vw, 9rem); padding: 3rem clamp(1.5rem, 8vw, 9rem); }
 .auth-intro { max-width: 560px; }.auth-intro h1 { font-size: clamp(2.6rem, 5vw, 4.7rem); }.auth-intro > p:not(.eyebrow) { max-width: 490px; font-size: 1rem; }.auth-benefits { display: flex; flex-wrap: wrap; gap: .8rem 1.3rem; color: var(--text-secondary); font-size: .72rem; }
 .auth-illustration { position: relative; height: 170px; margin: 1.5rem 0 .8rem; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: radial-gradient(circle at 25% 50%, rgba(72,141,255,.35), transparent 38%), linear-gradient(145deg, rgba(14,35,67,.85), rgba(8,20,40,.8)); }
 .auth-orbit { position: absolute; top: 50%; left: 15%; width: 220px; height: 90px; border: 1px solid rgba(110,168,255,.28); border-radius: 50%; transform: translateY(-50%) rotate(-12deg); }
@@ -232,4 +233,34 @@ p { color: var(--text-secondary); line-height: 1.55; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* PWA installation, standalone and mobile app shell */
+.install-card { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 1.2rem 1.35rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1); }
+.install-card[hidden] { display: none; }
+.install-card h2 { margin-bottom: .25rem; }
+.install-card p:last-child { margin-bottom: 0; }
+.ios-install-hint { color: var(--primary); font-size: .8rem; }
+
+@media (max-width: 640px) {
+  .app-shell { min-height: calc(100dvh - 66px); }
+  .main-content { padding-bottom: calc(6.5rem + env(safe-area-inset-bottom)); }
+  .bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 35; display: grid; grid-template-columns: repeat(4, 1fr); padding: .45rem max(.4rem, env(safe-area-inset-right)) calc(.45rem + env(safe-area-inset-bottom)) max(.4rem, env(safe-area-inset-left)); border-top: 1px solid var(--border); background: rgba(5,14,29,.94); backdrop-filter: blur(18px); }
+  .bottom-nav a { display: grid; min-height: 52px; place-items: center; align-content: center; gap: .2rem; border-radius: 9px; color: var(--text-muted); font-size: .64rem; text-decoration: none; }
+  .bottom-nav a:hover, .bottom-nav a.is-active { color: var(--primary); background: rgba(110,168,255,.08); }
+  .bottom-nav svg { width: 1.25rem; height: 1.25rem; }
+  .auth-layout { min-height: calc(100dvh - 66px); }
+  .install-card { align-items: stretch; flex-direction: column; }
+  .install-card .button { width: 100%; }
+}
+
+@media (display-mode: standalone) {
+  body { min-height: 100dvh; padding-top: env(safe-area-inset-top); }
+  .topbar { padding-left: max(clamp(1.2rem, 3.8vw, 4.2rem), env(safe-area-inset-left)); padding-right: max(clamp(1.2rem, 3.8vw, 4.2rem), env(safe-area-inset-right)); }
+  [data-install-section], [data-install-app] { display: none !important; }
+}
+
+@supports (top: env(titlebar-area-y)) {
+  html.has-window-controls-overlay .topbar { top: env(titlebar-area-y); min-height: env(titlebar-area-height); padding-left: max(1rem, env(titlebar-area-x)); padding-right: max(1rem, calc(100vw - env(titlebar-area-x) - env(titlebar-area-width))); -webkit-app-region: drag; }
+  html.has-window-controls-overlay .topbar a, html.has-window-controls-overlay .topbar button, html.has-window-controls-overlay .topbar nav, html.has-window-controls-overlay .topbar .search-display, html.has-window-controls-overlay .topbar .topbar-account { -webkit-app-region: no-drag; }
 }

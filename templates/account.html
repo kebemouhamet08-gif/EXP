@@ -2,6 +2,15 @@
 {% block title %}Mon compte · ClasseXP{% endblock %}
 {% block content %}
 <header class="page-header"><div><p class="eyebrow">Profil</p><h1>Mon compte</h1><p>{{ utilisateur.nom }} · {{ utilisateur.email }} · {{ 'Professeur' if utilisateur.role == 'PROFESSEUR' else 'Élève' }}</p></div></header>
+<section class="dashboard-section install-card" data-install-section hidden aria-labelledby="install-title">
+  <div>
+    <p class="eyebrow">Application</p>
+    <h2 id="install-title">ClasseXP sur cet appareil</h2>
+    <p>Installez ClasseXP pour l&rsquo;ouvrir dans sa propre fen&ecirc;tre et y acc&eacute;der depuis votre launcher.</p>
+    <p class="ios-install-hint" data-ios-install-hint hidden>Sur iPhone ou iPad&nbsp;: Partager &rarr; Ajouter &agrave; l&rsquo;&eacute;cran d&rsquo;accueil.</p>
+  </div>
+  <button class="button button-primary" type="button" data-install-app hidden>Installer ClasseXP</button>
+</section>
 <section class="dashboard-section account-methods" aria-labelledby="methods-title">
   <div class="section-header"><div><p class="eyebrow">Sécurité</p><h2 id="methods-title">Méthodes de connexion</h2></div></div>
   <div class="method-row"><div><strong>{{ '✓' if utilisateur.mot_de_passe_hash else '○' }} Mot de passe ClasseXP</strong></div></div>

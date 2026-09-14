@@ -1193,12 +1193,16 @@ def ready():
 @app.after_request
 def disable_private_response_caching(response):
     private_prefixes = (
-        '/connexion', '/inscription', '/auth/', '/dashboard', '/eleve',
-        '/professeur', '/devoir/', '/uploads/', '/mon-compte', '/rendre_copie',
+        '/connexion', '/inscription', '/deconnexion', '/changer-compte', '/auth/',
+        '/dashboard', '/eleve', '/professeur', '/devoir/', '/uploads/',
+        '/mon-compte', '/rendre_copie', '/copie-deposee',
     )
     if current_user.is_authenticated or request.path.startswith(private_prefixes):
         response.headers['Cache-Control'] = 'no-store, private'
         response.headers['Pragma'] = 'no-cache'
+    if request.path == '/static/sw.js':
+        response.headers['Service-Worker-Allowed'] = '/'
+        response.headers['Cache-Control'] = 'no-cache'
     return response
 
 

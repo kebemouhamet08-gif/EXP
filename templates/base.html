@@ -3,10 +3,17 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07111f">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
   <meta name="color-scheme" content="dark">
-  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <meta name="google-site-verification" content="3b1N2UJXDVZRfztGMomakvc-sgz3_bpvO9HnwaKUje0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="application-name" content="ClasseXP">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icons/favicon-32x32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='icons/favicon-16x16.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-180.png') }}">
   <title>{% block title %}ClasseXP{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   {% block head %}{% endblock %}
@@ -75,6 +82,12 @@
       <button class="sidebar-backdrop" type="button" data-sidebar-backdrop aria-label="Fermer la navigation"></button>
       <main class="main-content" id="main-content">{% block content %}{% endblock %}</main>
     </div>
+    <nav class="bottom-nav" aria-label="Navigation mobile">
+      <a class="{{ 'is-active' if request.endpoint in ['dashboard_professeur', 'dashboard_eleve'] }}" href="{{ url_for('dashboard') }}">{{ icon('home') }}<span>Accueil</span></a>
+      <a href="{{ url_for('dashboard') }}#{{ 'classes' if active_role == 'PROFESSEUR' else 'mes-classes' }}">{{ icon('classes') }}<span>Classes</span></a>
+      <a class="{{ 'is-active' if request.endpoint in ['nouveau_devoir', 'voir_devoir', 'voir_copies'] }}" href="{{ url_for('dashboard') }}#devoirs">{{ icon('document') }}<span>Devoirs</span></a>
+      <a class="{{ 'is-active' if request.endpoint == 'mon_compte' }}" href="{{ url_for('mon_compte') }}">{{ icon('settings') }}<span>Compte</span></a>
+    </nav>
   {% else %}
     <main id="main-content">{% block public_content %}{% endblock %}</main>
   {% endif %}

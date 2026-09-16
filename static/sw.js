@@ -1,4 +1,4 @@
-const CACHE_NAME = 'classexp-static-v4';
+const CACHE_NAME = 'classexp-static-v5';
 const OFFLINE_URL = '/static/offline.html';
 const CACHEABLE_DESTINATIONS = new Set(['style', 'script', 'image', 'font']);
 const PRECACHE_URLS = [
@@ -42,6 +42,12 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  const privatePrefixes = ['/messages', '/classes/', '/classe/', '/progression/', '/admin', '/corrections/', '/notifications'];
+  if (privatePrefixes.some((prefix) => url.pathname.startsWith(prefix))) {
+    event.respondWith(fetch(request, { cache: 'no-store' }));
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).catch(() => caches.match(OFFLINE_URL)));

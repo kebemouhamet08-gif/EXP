@@ -82,7 +82,7 @@ def test_database_constraints_and_foreign_keys(app):
         with pytest.raises(IntegrityError):
             connection.execute(
                 "INSERT INTO utilisateurs (nom, email, mot_de_passe_hash, role) VALUES (?, ?, ?, ?)",
-                ("Invalide", "bad@example.com", "hash", "ADMIN"),
+                ("Invalide", "bad@example.com", "hash", "SUPERADMIN"),
             )
         connection.rollback()
         with pytest.raises(IntegrityError):

@@ -29,6 +29,7 @@
           <div class="class-card-head"><span class="class-icon class-color-{{ loop.index0 % 4 }}">{{ icon('classes') }}</span><span class="class-menu" aria-hidden="true">•••</span></div>
           <h3>{{ classe['nom'] }}</h3><p>{{ classe['nombre_eleves'] }} élève{{ 's' if classe['nombre_eleves'] != 1 }}</p>
           <div class="class-code"><span><small>Code d’invitation</small><code>{{ classe['code'] }}</code></span><button type="button" data-copy="{{ classe['code'] }}" aria-label="Copier le code {{ classe['code'] }}">{{ icon('copy') }}</button></div>
+          <div class="row-actions"><a class="button button-secondary button-compact" href="{{ url_for('collaboration.members',classe_id=classe['id']) }}">Membres</a><a class="button button-secondary button-compact" href="{{ url_for('collaboration.class_progress',classe_id=classe['id']) }}">Progression</a></div>
         </article>
       {% endfor %}</div>
     {% else %}
@@ -93,7 +94,7 @@
 
   <section class="dashboard-section" id="mes-classes" aria-labelledby="student-classes-title">
     <div class="section-header"><div><p class="eyebrow">Vos espaces</p><h2 id="student-classes-title">Mes classes</h2></div></div>
-    {% if classes %}<div class="student-class-grid">{% for classe in classes %}<article class="student-class-card card"><span class="class-icon class-color-{{ loop.index0 % 4 }}">{{ icon('classes') }}</span><div><h3>{{ classe['nom'] }}</h3><p>Code {{ classe['code'] }}</p></div></article>{% endfor %}</div>{% else %}<div class="panel empty-state"><p>Vos classes apparaîtront ici après avoir saisi un code d’invitation.</p></div>{% endif %}
+    {% if classes %}<div class="student-class-grid">{% for classe in classes %}<article class="student-class-card card"><span class="class-icon class-color-{{ loop.index0 % 4 }}">{{ icon('classes') }}</span><div><h3>{{ classe['nom'] }}</h3><p>{% if classe['role']=='RESPONSABLE' %}Responsable · {% endif %}Code {{ classe['code'] }}</p><a href="{{ url_for('collaboration.my_progress',classe_id=classe['id']) }}">Ma progression</a>{% if classe['role']=='RESPONSABLE' %} · <a href="{{ url_for('collaboration.members',classe_id=classe['id']) }}">Ma classe</a>{% endif %}</div></article>{% endfor %}</div>{% else %}<div class="panel empty-state"><p>Vos classes apparaîtront ici après avoir saisi un code d’invitation.</p></div>{% endif %}
   </section>
 {% endif %}
 {% endblock %}

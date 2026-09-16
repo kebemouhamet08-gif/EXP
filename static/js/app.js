@@ -427,4 +427,21 @@
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     });
   });
+
+  document.querySelectorAll('form[data-confirm]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      if (form.dataset.confirmed === '1') return;
+      event.preventDefault();
+      const dialog = document.createElement('dialog');
+      dialog.className = 'confirm-dialog';
+      const message = document.createElement('p');
+      message.textContent = form.dataset.confirm || 'Confirmer cette action ?';
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Annuler';
+      const confirm = document.createElement('button'); confirm.type = 'button'; confirm.textContent = 'Confirmer'; confirm.className = 'button button-danger';
+      dialog.append(message, cancel, confirm); document.body.append(dialog);
+      cancel.addEventListener('click', () => { dialog.close(); dialog.remove(); });
+      confirm.addEventListener('click', () => { form.dataset.confirmed = '1'; dialog.close(); dialog.remove(); form.requestSubmit(); });
+      dialog.showModal(); cancel.focus();
+    });
+  });
 })();

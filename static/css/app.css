@@ -270,6 +270,10 @@ p { color: var(--text-secondary); line-height: 1.55; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 
+/* Collaborative workspace */
+.feature-tabs,.row-actions,.inline-form{display:flex;gap:.75rem;flex-wrap:wrap;align-items:end}.feature-tabs{margin:0 0 1.25rem}.member-list{display:grid;gap:.75rem}.member-row,.notification-row,.conversation-row{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:1rem;border:1px solid rgba(148,163,184,.2);border-radius:14px}.member-row small,.conversation-row small{display:block}.progress-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem}.progress-card{padding:1rem;border:1px solid rgba(148,163,184,.2);border-radius:16px}.progress-card dl{display:grid;grid-template-columns:1fr auto;gap:.4rem}.progress-card dd{margin:0}.message-stream{display:flex;flex-direction:column;gap:.75rem;max-height:55dvh;overflow:auto;padding:1rem 0}.chat-message{max-width:75%;padding:.75rem 1rem;border-radius:16px;background:rgba(148,163,184,.15)}.chat-message.mine{align-self:flex-end;background:rgba(99,102,241,.25)}.chat-message p{margin:.25rem 0}.chat-message time{font-size:.75rem}.message-compose{display:grid;grid-template-columns:1fr auto;gap:.75rem}.message-compose textarea{min-height:60px}.maintenance-page{min-height:100dvh;display:grid;place-items:center;padding:1rem}.button-danger{background:#991b1b;color:#fff}
+@media(max-width:600px){.member-row{align-items:flex-start;flex-direction:column}.row-actions{width:100%}.row-actions>*{flex:1}.message-compose{grid-template-columns:1fr}.chat-message{max-width:90%}}
+
 /* PWA installation, standalone and mobile app shell */
 .install-card { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 1.2rem 1.35rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1); }
 .install-card[hidden] { display: none; }

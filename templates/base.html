@@ -1,4 +1,4 @@
-{% from "_icons.html" import icon, logo %}
+\{% from "_icons.html" import icon, logo %}
 <!doctype html>
 <html lang="fr">
 <head>
@@ -21,6 +21,7 @@
 {% set connected_page = nav_utilisateur is defined and nav_utilisateur %}
 {% set active_role = nav_role|default(role|default('')) %}
 <body class="{{ 'app-page' if connected_page else 'public-page' }}">
+  {% if site_banner %}<aside class="global-banner banner-{{ site_banner['type']|lower }}" role="status">{{ site_banner['message'] }}{% if site_banner['link'] %} <a href="{{ site_banner['link'] }}">En savoir plus</a>{% endif %}</aside>{% endif %}
   <a class="skip-link" href="#main-content">Aller au contenu</a>
   <header class="topbar {{ 'app-topbar' if connected_page else 'public-topbar' }}">
     <a class="brand" href="{{ url_for('dashboard') if connected_page else url_for('accueil') }}" aria-label="ClasseXP, accueil">{{ logo() }}</a>
@@ -33,7 +34,7 @@
         {{ icon('search') }}<span>Rechercher un devoir, une classe, un fichier…</span><small>Bientôt</small>
       </div>
       <div class="topbar-account">
-        <span class="notification" aria-label="Notifications, bientôt disponible">{{ icon('bell') }}<i aria-hidden="true"></i></span>
+        <a class="notification" href="{{ url_for('collaboration.notification_list') }}" aria-label="Notifications{% if unread_notifications %}, {{ unread_notifications }} non lues{% endif %}">{{ icon('bell') }}{% if unread_notifications %}<i aria-hidden="true"></i>{% endif %}</a>
         <span class="avatar" aria-hidden="true">{{ nav_utilisateur['nom'][0]|upper }}</span>
         <span class="account-copy"><strong>{{ nav_utilisateur['nom'] }}</strong><small>{{ 'Professeur' if active_role == 'PROFESSEUR' else 'Élève' }}</small></span>
         <a class="account-text-link" href="{{ url_for('changer_compte') }}">Changer de compte</a>
@@ -69,6 +70,8 @@
             <span class="sidebar-item sidebar-item--disabled">{{ icon('folder') }}<span>Fichiers<small>Bientôt</small></span></span>
           {% endif %}
           <span class="sidebar-separator" aria-hidden="true"></span>
+          <a class="sidebar-item" href="{{ url_for('collaboration.message_list') }}">{{ icon('document') }}<span>Messages</span></a>
+          {% if active_role == 'ADMIN' %}<a class="sidebar-item" href="{{ url_for('collaboration.admin_home') }}">{{ icon('settings') }}<span>Administration</span></a>{% endif %}
           <a class="sidebar-item {{ 'sidebar-item--active' if request.endpoint == 'mon_compte' }}" href="{{ url_for('mon_compte') }}">{{ icon('settings') }}<span>Mon compte</span></a>
           <a class="sidebar-item" href="{{ url_for('changer_compte') }}">{{ icon('logout') }}<span>Changer de compte</span></a>
         </nav>

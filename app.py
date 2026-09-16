@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+import click
 
 from database import (
     close_db,
@@ -307,7 +308,12 @@ def inject_navigation_context():
     """Expose the signed-in user to the shared application shell."""
     if not current_user.is_authenticated:
         return {}
-    return {'nav_utilisateur': current_user, 'nav_role': current_user.role}
+    db = get_db()
+    unread = db.execute(
+        'SELECT COUNT(*) FROM notifications WHERE utilisateur_id = ? AND lu_at IS NULL',
+        (current_user.id,),
+    ).fetchone()[0]
+    return {'nav_utilisateur': current_user, 'nav_role': current_user.role, 'unread_notifications': unread}
 
 
 @app.cli.command('init-db')
@@ -317,6 +323,30 @@ def init_db_command():
         raise RuntimeError('init-db est interdite en production; utilisez Alembic.')
     init_db()
     print('La base de donnees ClasseXP a ete initialisee avec succes.')
+
+
+@app.cli.command('make-admin')
+@click.argument('email')
+def make_admin_command(email):
+    """Promote an existing account without reading or displaying its password."""
+    db = get_db()
+    user = db.execute('SELECT id, role FROM utilisateurs WHERE lower(email) = ?', (email.lower(),)).fetchone()
+    if user is None:
+        raise click.ClickException('Utilisateur introuvable.')
+    db.execute("UPDATE utilisateurs SET role='ADMIN' WHERE id=?", (user['id'],))
+    db.execute("INSERT INTO audit_logs (actor_user_id,action,entity_type,entity_id,metadata_json) VALUES (NULL,'ADMIN_PROMOTED','user',?,?)", (str(user['id']), '{}'))
+    db.commit(); click.echo('Utilisateur promu ADMIN.')
+
+
+@app.cli.command('remove-admin')
+@click.argument('email')
+def remove_admin_command(email):
+    """Remove global admin rights from an existing account."""
+    db=get_db(); user=db.execute("SELECT id FROM utilisateurs WHERE lower(email)=? AND role='ADMIN'",(email.lower(),)).fetchone()
+    if user is None: raise click.ClickException('Administrateur introuvable.')
+    db.execute("UPDATE utilisateurs SET role='PROFESSEUR' WHERE id=?",(user['id'],))
+    db.execute("INSERT INTO audit_logs (actor_user_id,action,entity_type,entity_id,metadata_json) VALUES (NULL,'ADMIN_REMOVED','user',?,?)",(str(user['id']),'{}'))
+    db.commit(); click.echo('Droits ADMIN retirés.')
 
 
 @app.cli.command('auth-status')
@@ -806,6 +836,8 @@ def role_requis(role):
 @app.get('/dashboard')
 @login_required
 def dashboard():
+    if current_user.role == 'ADMIN':
+        return redirect(url_for('collaboration.admin_home'))
     if current_user.role == 'PROFESSEUR':
         return redirect(url_for('dashboard_professeur'))
     return redirect(url_for('dashboard_eleve'))
@@ -825,12 +857,12 @@ def dashboard_eleve():
            JOIN classes c ON c.id = d.classe_id
            JOIN classe_eleves ce ON ce.classe_id = c.id
               LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.eleve_id = ?
-           WHERE ce.eleve_id = ?
+           WHERE ce.eleve_id = ? AND ce.statut='ACTIVE'
            ORDER BY d.date_ouverture DESC''',
           (current_user.id, current_user.id, current_user.id),
     ).fetchall()
     classes = get_db().execute(
-        'SELECT c.nom, c.code FROM classes c JOIN classe_eleves ce ON ce.classe_id = c.id WHERE ce.eleve_id = ?',
+        "SELECT c.id,c.nom,c.code,ce.role FROM classes c JOIN classe_eleves ce ON ce.classe_id=c.id WHERE ce.eleve_id=? AND ce.statut='ACTIVE'",
         (current_user.id,),
     ).fetchall()
     devoirs_en_cours = sum(1 for devoir in devoirs if devoir['statut'] == 'EN_COURS')
@@ -851,8 +883,9 @@ def dashboard_professeur():
     db = get_db()
     classes = db.execute(
         '''SELECT c.*, COUNT(ce.eleve_id) AS nombre_eleves
-           FROM classes c LEFT JOIN classe_eleves ce ON ce.classe_id = c.id
-           WHERE c.professeur_id = ? GROUP BY c.id, c.nom ORDER BY c.nom''',
+           FROM classes c JOIN classe_professeurs cp ON cp.classe_id = c.id
+           LEFT JOIN classe_eleves ce ON ce.classe_id = c.id AND ce.statut = 'ACTIVE'
+           WHERE cp.professeur_id = ? GROUP BY c.id, c.nom ORDER BY c.nom''',
         (current_user.id,),
     ).fetchall()
     devoirs = db.execute(
@@ -861,7 +894,8 @@ def dashboard_professeur():
                   COUNT(CASE WHEN s.fichier_copie IS NOT NULL AND s.note IS NULL THEN 1 END) AS a_corriger
            FROM devoirs d JOIN classes c ON c.id = d.classe_id
            LEFT JOIN sessions_examen s ON s.devoir_id = d.id AND s.fichier_copie IS NOT NULL
-           WHERE d.professeur_id = ? GROUP BY d.id, c.nom ORDER BY d.date_ouverture DESC''',
+           JOIN classe_professeurs cp ON cp.classe_id=d.classe_id
+           WHERE cp.professeur_id = ? GROUP BY d.id, c.nom ORDER BY d.date_ouverture DESC''',
         (current_user.id,),
     ).fetchall()
     return render_template(
@@ -880,7 +914,9 @@ def nouvelle_classe():
             return render_template('formulaire.html', type_formulaire='classe', error='Le nom est obligatoire.')
         code = secrets.token_hex(3).upper()
         db = get_db()
-        db.execute('INSERT INTO classes (nom, professeur_id, code) VALUES (?, ?, ?)', (nom, current_user.id, code))
+        row=db.execute('INSERT INTO classes (nom, professeur_id, code) VALUES (?, ?, ?) RETURNING id', (nom, current_user.id, code)).fetchone()
+        db.execute("INSERT INTO classe_professeurs (classe_id,professeur_id,role,ajoute_par) VALUES (?,?,'OWNER',?)",(row['id'],current_user.id,current_user.id))
+        db.execute("INSERT INTO class_settings (classe_id) VALUES (?)",(row['id'],))
         db.commit()
         flash('Classe créée.', 'success')
         return redirect(url_for('dashboard_professeur'))
@@ -895,7 +931,11 @@ def rejoindre_classe():
     if classe is None:
         return action_error('Code de classe invalide. Vérifiez le code transmis par le professeur.', 404)
     db = get_db()
-    db.execute('INSERT OR IGNORE INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], current_user.id))
+    existing=db.execute('SELECT statut FROM classe_eleves WHERE classe_id=? AND eleve_id=?',(classe['id'],current_user.id)).fetchone()
+    if existing:
+        db.execute("UPDATE classe_eleves SET statut='ACTIVE',removed_at=NULL,removed_by=NULL WHERE classe_id=? AND eleve_id=?",(classe['id'],current_user.id))
+    else:
+        db.execute('INSERT INTO classe_eleves (classe_id, eleve_id) VALUES (?, ?)', (classe['id'], current_user.id))
     db.commit()
     flash('Classe rejointe.', 'success')
     return redirect(url_for('dashboard_eleve'))
@@ -905,7 +945,7 @@ def rejoindre_classe():
 @role_requis('PROFESSEUR')
 def nouveau_devoir():
     db = get_db()
-    classes = db.execute('SELECT id, nom FROM classes WHERE professeur_id = ? ORDER BY nom', (current_user.id,)).fetchall()
+    classes = db.execute('SELECT c.id,c.nom FROM classes c JOIN classe_professeurs cp ON cp.classe_id=c.id WHERE cp.professeur_id=? ORDER BY c.nom', (current_user.id,)).fetchall()
     if request.method == 'POST':
         titre = request.form.get('titre', '').strip()
         classe_id = request.form.get('classe_id', type=int)
@@ -913,7 +953,7 @@ def nouveau_devoir():
         ouverture = request.form.get('date_ouverture', '').strip()
         sujet = request.files.get('sujet')
         nom_sujet = nom_stockage_unique(sujet.filename) if sujet is not None else None
-        classe = db.execute('SELECT id FROM classes WHERE id = ? AND professeur_id = ?', (classe_id, current_user.id)).fetchone()
+        classe = db.execute('SELECT c.id FROM classes c JOIN classe_professeurs cp ON cp.classe_id=c.id WHERE c.id=? AND cp.professeur_id=?', (classe_id, current_user.id)).fetchone()
         if not titre or classe is None or not duree or duree < 60 or not ouverture or sujet is None or nom_sujet is None:
             flash('Vérifiez les informations obligatoires du devoir.', 'error')
             return render_template('formulaire.html', type_formulaire='devoir', classes=classes, error='Tous les champs sont obligatoires. La duree minimale est de 60 secondes.')
@@ -972,7 +1012,7 @@ def nouveau_devoir():
 @role_requis('PROFESSEUR')
 def voir_copies(devoir_id):
     devoir = get_db().execute(
-        'SELECT * FROM devoirs WHERE id = ? AND professeur_id = ?',
+        'SELECT d.* FROM devoirs d JOIN classe_professeurs cp ON cp.classe_id=d.classe_id WHERE d.id=? AND cp.professeur_id=?',
         (devoir_id, current_user.id),
     ).fetchone()
     if devoir is None:
@@ -999,7 +1039,8 @@ def noter_copie(session_id):
     db = get_db()
     examen = db.execute(
         '''SELECT s.id FROM sessions_examen s JOIN devoirs d ON d.id = s.devoir_id
-           WHERE s.id = ? AND d.professeur_id = ?''',
+           JOIN classe_professeurs cp ON cp.classe_id=d.classe_id
+           WHERE s.id = ? AND cp.professeur_id = ?''',
         (session_id, current_user.id),
     ).fetchone()
     if examen is None:
@@ -1015,7 +1056,7 @@ def devoir_accessible(devoir_id):
         '''SELECT d.*, c.nom AS classe_nom FROM devoirs d
            JOIN classes c ON c.id = d.classe_id
            JOIN classe_eleves ce ON ce.classe_id = c.id
-           WHERE d.id = ? AND ce.eleve_id = ?''',
+           WHERE d.id = ? AND ce.eleve_id = ? AND ce.statut='ACTIVE' ''',
         (devoir_id, current_user.id),
     ).fetchone()
 
@@ -1054,7 +1095,9 @@ def voir_devoir(devoir_id):
         return redirect(url_for('dashboard_eleve'))
     fin = datetime.fromisoformat(examen['heure_debut']) + timedelta(seconds=devoir['duree'])
     restant = max(0, int((fin - utc_now()).total_seconds()))
-    return render_template('devoir.html', devoir=devoir, restant=restant, examen=examen)
+    from collaboration import correction_allowed
+    return render_template('devoir.html', devoir=devoir, restant=restant, examen=examen,
+                           correction_available=correction_allowed(devoir, current_user.id))
 
 
 def extension_autorisee(nom_fichier):
@@ -1163,31 +1206,31 @@ def telecharger_fichier(nom_fichier):
     if storage_key.startswith('subjects/'):
         if current_user.role == 'PROFESSEUR':
             autorise = get_db().execute(
-                'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
+                'SELECT 1 FROM devoirs d JOIN classe_professeurs cp ON cp.classe_id=d.classe_id WHERE d.sujet_pdf=? AND cp.professeur_id=?',
                 (storage_key, current_user.id),
             ).fetchone() is not None
         else:
             autorise = get_db().execute(
                 '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
-                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
+                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ? AND ce.statut='ACTIVE' ''',
                 (storage_key, current_user.id),
             ).fetchone() is not None
     elif storage_key.startswith('sujets/') and len(storage_key.split('/')) == 2:
         legacy_name = storage_key.split('/')[1]
         if current_user.role == 'PROFESSEUR':
             autorise = get_db().execute(
-                'SELECT 1 FROM devoirs WHERE sujet_pdf = ? AND professeur_id = ?',
+                'SELECT 1 FROM devoirs d JOIN classe_professeurs cp ON cp.classe_id=d.classe_id WHERE d.sujet_pdf=? AND cp.professeur_id=?',
                 (legacy_name, current_user.id),
             ).fetchone() is not None
         else:
             autorise = get_db().execute(
                 '''SELECT 1 FROM devoirs d JOIN classe_eleves ce ON ce.classe_id = d.classe_id
-                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ?''',
+                   WHERE d.sujet_pdf = ? AND ce.eleve_id = ? AND ce.statut='ACTIVE' ''',
                 (legacy_name, current_user.id),
             ).fetchone() is not None
     elif storage_key.startswith('copies/'):
         copie = get_db().execute(
-            '''SELECT s.eleve_id, d.professeur_id FROM sessions_examen s
+            '''SELECT s.eleve_id, d.classe_id FROM sessions_examen s
                JOIN devoirs d ON d.id = s.devoir_id
                WHERE s.fichier_copie = ?''',
             (storage_key,),
@@ -1196,7 +1239,7 @@ def telecharger_fichier(nom_fichier):
             legacy_parts = storage_key.split('/')
             if len(legacy_parts) == 3 and legacy_parts[1].isdigit():
                 copie = get_db().execute(
-                    '''SELECT s.eleve_id, d.professeur_id FROM sessions_examen s
+                    '''SELECT s.eleve_id, d.classe_id FROM sessions_examen s
                        JOIN devoirs d ON d.id = s.devoir_id
                        WHERE s.devoir_id = ? AND s.fichier_copie = ?''',
                     (int(legacy_parts[1]), legacy_parts[2]),
@@ -1204,8 +1247,8 @@ def telecharger_fichier(nom_fichier):
         if copie is None:
             abort(404)
         autorise = (
-            current_user.role == 'PROFESSEUR'
-            and copie['professeur_id'] == current_user.id
+            current_user.role in {'PROFESSEUR','ADMIN'}
+            and get_db().execute('SELECT 1 FROM classe_professeurs WHERE classe_id=? AND professeur_id=?',(copie['classe_id'],current_user.id)).fetchone() is not None
         ) or (
             current_user.role == 'ELEVE'
             and copie['eleve_id'] == current_user.id
@@ -1280,7 +1323,8 @@ def disable_private_response_caching(response):
     private_prefixes = (
         '/connexion', '/inscription', '/deconnexion', '/changer-compte', '/auth/',
         '/dashboard', '/eleve', '/professeur', '/devoir/', '/uploads/',
-        '/mon-compte', '/rendre_copie', '/copie-deposee',
+        '/mon-compte', '/rendre_copie', '/copie-deposee', '/messages',
+        '/classe/', '/progression/', '/admin', '/corrections/', '/notifications',
     )
     if current_user.is_authenticated or request.path.startswith(private_prefixes):
         response.headers['Cache-Control'] = 'no-store, private'
@@ -1289,6 +1333,44 @@ def disable_private_response_caching(response):
         response.headers['Service-Worker-Allowed'] = '/'
         response.headers['Cache-Control'] = 'no-cache'
     return response
+
+
+# Feature routes are isolated to keep the established authentication/OAuth flow stable.
+from collaboration import bp as collaboration_blueprint
+app.register_blueprint(collaboration_blueprint)
+
+
+@app.before_request
+def enforce_maintenance_mode():
+    if request.path.startswith(('/admin', '/health', '/ready', '/static/')):
+        return None
+    setting = get_db().execute(
+        'SELECT maintenance_enabled,maintenance_message,maintenance_starts_at,maintenance_ends_at FROM site_settings WHERE id=1'
+    ).fetchone()
+    if setting is None or not setting['maintenance_enabled']:
+        return None
+    active = True
+    moment = utc_now()
+    if setting['maintenance_starts_at']:
+        active = active and moment >= datetime.fromisoformat(setting['maintenance_starts_at'])
+    if setting['maintenance_ends_at']:
+        active = active and moment <= datetime.fromisoformat(setting['maintenance_ends_at'])
+    if active and not (current_user.is_authenticated and current_user.role == 'ADMIN'):
+        return render_template('maintenance.html', message=setting['maintenance_message']), 503
+    return None
+
+
+@app.context_processor
+def inject_public_site_content():
+    moment = utc_now()
+    banners = get_db().execute(
+        '''SELECT * FROM site_banners WHERE enabled=TRUE
+           AND (starts_at IS NULL OR starts_at <= ?) AND (ends_at IS NULL OR ends_at >= ?)
+           ORDER BY id DESC LIMIT 1''', (moment.isoformat(timespec='seconds'), moment.isoformat(timespec='seconds')),
+    ).fetchall()
+    content = get_db().execute('SELECT * FROM site_content WHERE enabled=TRUE ORDER BY position,key').fetchall()
+    settings = get_db().execute('SELECT * FROM site_settings WHERE id=1').fetchone()
+    return {'site_banner': banners[0] if banners else None, 'site_content_items': content, 'site_settings': settings}
 
 
 if __name__ == '__main__':

@@ -73,7 +73,7 @@ def validate_source(source, collected):
     if errors:
         raise RuntimeError(f"La source SQLite contient des FK invalides: {errors}")
     for user in collected["utilisateurs"]:
-        if user.get("role") not in {"ELEVE", "PROFESSEUR"}:
+        if user.get("role") not in {"ELEVE", "PROFESSEUR", "ADMIN"}:
             raise RuntimeError(f"Role invalide pour utilisateur {user.get('id')}")
 
 

@@ -1,5 +1,6 @@
--- Schema SQLite historique. La source de verite versionnee est desormais
--- models.py + migrations/. `flask init-db` utilise SQLAlchemy.
+-- Schema SQLite historique utilisé pour les migrations de données existantes.
+-- Les tables avancées du projet (multi-professeurs, CMS, chat, etc.) sont
+-- gérées par le modèle SQLAlchemy et les migrations Alembic, pas par ce fichier.
 DROP TABLE IF EXISTS fichiers;
 DROP TABLE IF EXISTS sessions_examen;
 DROP TABLE IF EXISTS devoirs;
@@ -13,7 +14,7 @@ CREATE TABLE utilisateurs (
     nom TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     mot_de_passe_hash TEXT,
-    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR')) NOT NULL,
+    role TEXT CHECK(role IN ('ELEVE', 'PROFESSEUR', 'ADMIN')) NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -81,7 +82,7 @@ CREATE TABLE fichiers (
     original_filename TEXT NOT NULL,
     content_type TEXT NOT NULL,
     size INTEGER NOT NULL,
-    kind TEXT CHECK(kind IN ('SUJET', 'COPIE', 'CORRECTION', 'PHOTO')) NOT NULL,
+    kind TEXT CHECK(kind IN ('SUJET', 'COPIE', 'CORRECTION', 'PHOTO', 'SITE_IMAGE')) NOT NULL,
     owner_user_id INTEGER,
     devoir_id INTEGER,
     session_id INTEGER,

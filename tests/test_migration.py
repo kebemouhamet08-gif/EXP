@@ -59,6 +59,23 @@ def test_sqlite_migration_dry_run_reports_every_entity(tmp_path):
         assert expected in result.stdout
 
 
+def test_sqlite_migration_accepts_admin_users(tmp_path):
+    source = tmp_path / 'source.sqlite'
+    connection = sqlite3.connect(source)
+    connection.executescript(Path('schema.sql').read_text(encoding='utf-8'))
+    connection.execute(
+        "INSERT INTO utilisateurs VALUES (1, 'Admin', 'admin@example.com', ?, 'ADMIN', CURRENT_TIMESTAMP)",
+        (generate_password_hash('adminpass123'),),
+    )
+    connection.commit()
+    connection.close()
+
+    result = run_migration('--source', str(source), '--dry-run')
+    assert result.returncode == 0, result.stderr
+    assert 'utilisateurs: 1' in result.stdout
+    assert 'DRY-RUN' in result.stdout
+
+
 def test_dispose_engines_clears_engine_cache(tmp_path):
     _engine(f"sqlite:///{tmp_path / 'lifecycle.sqlite'}")
     assert _engines

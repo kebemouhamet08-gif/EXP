@@ -300,6 +300,28 @@ def valid_csrf():
     return bool(expected and secrets.compare_digest(supplied, expected))
 
 
+def csrf_protected(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not valid_csrf():
+            abort(400, 'Jeton CSRF invalide.')
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def reset_token_expired(expires_at):
+    if expires_at is None:
+        return True
+    try:
+        return datetime.fromisoformat(expires_at) < datetime.now(timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return True
+
+
+def ensure_password_strength(password):
+    return isinstance(password, str) and len(password) >= 8
+
+
 app.jinja_env.globals['csrf_token'] = csrf_token
 
 
@@ -515,6 +537,119 @@ def connexion():
 @login_required
 def deconnexion():
     end_local_session()
+    return redirect(url_for('connexion'))
+
+
+@app.route('/mot-de-passe-oublie', methods=['GET', 'POST'])
+def mot_de_passe_oublie():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        db = get_db()
+        if email:
+            user = db.execute('SELECT id FROM utilisateurs WHERE lower(email) = lower(?)', (email,)).fetchone()
+            if user is not None:
+                token = secrets.token_urlsafe(32)
+                expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).replace(tzinfo=None)
+                db.execute('DELETE FROM password_reset_tokens WHERE utilisateur_id = ?', (user['id'],))
+                db.execute(
+                    'INSERT INTO password_reset_tokens (utilisateur_id, token, created_at, expires_at) VALUES (?, ?, ?, ?)',
+                    (user['id'], token, datetime.now(timezone.utc).replace(tzinfo=None), expires_at),
+                )
+                db.commit()
+                flash('Si un compte correspond, un lien de réinitialisation a été créé.', 'success')
+        else:
+            flash('Saisissez une adresse e-mail.', 'error')
+        return render_template('password_forgot.html', email=email)
+    return render_template('password_forgot.html')
+
+
+@app.route('/reinitialiser-mot-de-passe', methods=['GET', 'POST'])
+def reinitialiser_mot_de_passe():
+    token = request.args.get('token') or request.form.get('token', '')
+    error = None
+    if request.method == 'POST':
+        token = request.form.get('token', '').strip()
+        password = request.form.get('mot_de_passe', '')
+        confirmation = request.form.get('mot_de_passe_confirm', '')
+        if not token:
+            error = 'Le jeton de réinitialisation est manquant.'
+        elif not ensure_password_strength(password):
+            error = 'Le mot de passe doit contenir au moins 8 caractères.'
+        elif password != confirmation:
+            error = 'La confirmation du mot de passe ne correspond pas.'
+        else:
+            db = get_db()
+            row = db.execute(
+                'SELECT utilisateur_id FROM password_reset_tokens WHERE token = ? AND expires_at > ?',
+                (token, datetime.now(timezone.utc).replace(tzinfo=None)),
+            ).fetchone()
+            if row is None:
+                error = 'Ce lien de réinitialisation est invalide ou expiré.'
+            else:
+                db.execute(
+                    'UPDATE utilisateurs SET mot_de_passe_hash = ? WHERE id = ?',
+                    (generate_password_hash(password), row['utilisateur_id']),
+                )
+                db.execute('DELETE FROM password_reset_tokens WHERE token = ?', (token,))
+                db.commit()
+                flash('Votre mot de passe a été réinitialisé.', 'success')
+                return redirect(url_for('connexion'))
+    if error:
+        flash(error, 'error')
+    return render_template('password_reset.html', token=token, error=error)
+
+
+@app.post('/admin/utilisateurs/<int:user_id>/reinitialiser-mot-de-passe')
+@login_required
+@csrf_protected
+def admin_reinitialiser_mot_de_passe(user_id):
+    if current_user.role != 'ADMIN':
+        abort(403)
+    password = request.form.get('mot_de_passe', '')
+    confirmation = request.form.get('mot_de_passe_confirm', '')
+    if not ensure_password_strength(password):
+        flash('Le mot de passe doit contenir au moins 8 caractères.', 'error')
+        return redirect(url_for('mon_compte'))
+    if password != confirmation:
+        flash('La confirmation du mot de passe ne correspond pas.', 'error')
+        return redirect(url_for('mon_compte'))
+    db = get_db()
+    row = db.execute('SELECT id, email FROM utilisateurs WHERE id = ?', (user_id,)).fetchone()
+    if row is None:
+        abort(404)
+    db.execute(
+        'UPDATE utilisateurs SET mot_de_passe_hash = ? WHERE id = ?',
+        (generate_password_hash(password), row['id']),
+    )
+    db.execute(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata_json) VALUES (?, ?, ?, ?, ?)',
+        (current_user.id, 'PASSWORD_RESET_BY_ADMIN', 'user', row['id'], json.dumps({'email': row['email']}, ensure_ascii=False)),
+    )
+    db.commit()
+    flash('Le mot de passe a été réinitialisé.', 'success')
+    return redirect(url_for('collaboration.admin_home'))
+
+
+@app.post('/mon-compte/supprimer')
+@login_required
+@csrf_protected
+def supprimer_compte():
+    password = request.form.get('mot_de_passe', '')
+    confirm = request.form.get('confirm') == '1'
+    db = get_db()
+    user = db.execute('SELECT mot_de_passe_hash FROM utilisateurs WHERE id = ?', (current_user.id,)).fetchone()
+    if user is None or not user['mot_de_passe_hash'] or not check_password_hash(user['mot_de_passe_hash'], password):
+        flash('Mot de passe incorrect.', 'error')
+        return redirect(url_for('mon_compte'))
+    if not confirm:
+        flash('Confirmez explicitement la suppression du compte.', 'error')
+        return redirect(url_for('mon_compte'))
+    db.execute('DELETE FROM utilisateurs WHERE id = ?', (current_user.id,))
+    db.commit()
+    end_local_session()
+    flash('Compte supprimé.', 'success')
     return redirect(url_for('connexion'))
 
 

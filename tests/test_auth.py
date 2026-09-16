@@ -134,6 +134,87 @@ def test_logout_clears_session_and_remember_cookie(client):
     assert "/connexion" in protected.location
 
 
+def test_forgot_password_allows_user_to_reset_own_password(client, app):
+    email, _ = register(client)
+
+    response = client.post("/mot-de-passe-oublie", data={"email": email})
+    assert response.status_code == 200
+    assert b"Mot de passe" in response.data
+
+    with app.app_context():
+        token = application_module.get_db().execute(
+            "SELECT token FROM password_reset_tokens WHERE utilisateur_id = (SELECT id FROM utilisateurs WHERE email = ?)",
+            (email,),
+        ).fetchone()
+
+    assert token is not None
+    new_password = "NouveauMotdePasse456"
+    reset_response = client.post(
+        "/reinitialiser-mot-de-passe",
+        data={"token": token["token"], "mot_de_passe": new_password, "mot_de_passe_confirm": new_password},
+    )
+    assert reset_response.status_code == 302
+
+    logout = client.get("/deconnexion")
+    assert logout.status_code == 302
+    assert login(client, email, new_password).status_code == 302
+
+
+def test_admin_can_reset_another_users_password(client, app):
+    user_email, _ = register(client, email="user-admin-reset@example.com")
+    with app.app_context():
+        application_module.get_db().execute(
+            "UPDATE utilisateurs SET role = 'ADMIN' WHERE email = ?",
+            (user_email,),
+        )
+        application_module.get_db().commit()
+        target_id = application_module.get_db().execute(
+            "SELECT id FROM utilisateurs WHERE email = ?",
+            (user_email,),
+        ).fetchone()[0]
+        admin_email, _ = register(client, email="admin-keeper@example.com")
+        application_module.get_db().execute(
+            "UPDATE utilisateurs SET role = 'ADMIN' WHERE email = ?",
+            (admin_email,),
+        )
+        application_module.get_db().commit()
+
+    assert login(client, admin_email).status_code == 302
+    session_token = client.get("/mon-compte")
+    assert session_token.status_code == 200
+    with client.session_transaction() as session:
+        csrf = session.get("_csrf_token")
+
+    response = client.post(
+        f"/admin/utilisateurs/{target_id}/reinitialiser-mot-de-passe",
+        data={"mot_de_passe": "MotDePasseAdmin987", "mot_de_passe_confirm": "MotDePasseAdmin987", "_csrf_token": csrf},
+    )
+    assert response.status_code == 302
+    assert login(client, user_email, "MotDePasseAdmin987").status_code == 302
+
+
+def test_user_can_delete_own_account_after_confirmation(client, app):
+    email, _ = register(client, email="delete-me@example.com")
+    assert login(client, email).status_code == 302
+
+    profile = client.get("/mon-compte")
+    assert profile.status_code == 200
+    with client.session_transaction() as session:
+        csrf = session.get("_csrf_token")
+
+    delete_response = client.post(
+        "/mon-compte/supprimer",
+        data={"mot_de_passe": "motdepasse123", "confirm": "1", "_csrf_token": csrf},
+    )
+    assert delete_response.status_code == 302
+    with app.app_context():
+        count = application_module.get_db().execute(
+            "SELECT COUNT(*) FROM utilisateurs WHERE email = ?",
+            (email,),
+        ).fetchone()[0]
+    assert count == 0
+
+
 def test_protected_endpoints_require_authentication(client):
     for path in ("/dashboard", "/eleve", "/professeur", "/rendre_copie"):
         response = client.get(path) if path != "/rendre_copie" else client.post(path)

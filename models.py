@@ -40,6 +40,17 @@ utilisateurs = Table(
     CheckConstraint("role IN ('ELEVE', 'PROFESSEUR', 'ADMIN')", name="role_valide"),
 )
 
+password_reset_tokens = Table(
+    "password_reset_tokens",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("utilisateur_id", Integer, ForeignKey("utilisateurs.id", ondelete="CASCADE"), nullable=False),
+    Column("token", String(128), nullable=False, unique=True),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    Column("expires_at", DateTime, nullable=False, server_default=func.now()),
+    Index("ix_password_reset_tokens_utilisateur", "utilisateur_id"),
+)
+
 identites_externes = Table(
     "identites_externes",
     metadata,

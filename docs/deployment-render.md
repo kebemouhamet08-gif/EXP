@@ -33,7 +33,19 @@ R2_ACCESS_KEY_ID=<secret Render>
 R2_SECRET_ACCESS_KEY=<secret Render>
 R2_BUCKET=<bucket prive>
 R2_REGION=auto
+CLASSEXP_MAIL_HOST=smtp.gmail.com
+CLASSEXP_MAIL_PORT=587
+CLASSEXP_MAIL_USERNAME=<adresse email d'envoi>
+CLASSEXP_MAIL_PASSWORD=<mot de passe d'application SMTP>
+CLASSEXP_MAIL_FROM=<adresse email d'envoi>
+CLASSEXP_BASE_URL=https://<votre-service>.onrender.com
 ```
+
+Dans le tableau de bord Render : ouvrir le Web Service, aller dans **Environment**,
+ajouter ces variables une par une, puis redéployer. Ne pas mettre le mot de passe
+SMTP dans Git. Avec Gmail, utiliser un mot de passe d'application et non le mot de
+passe habituel du compte. Le lien de réinitialisation sera envoyé à l'adresse du
+compte concerné.
 
 OAuth reste optionnel. Ajouter les variables Google, Facebook, Microsoft et Apple
 de `.env.example` uniquement pour les fournisseurs actives. Les callbacks doivent

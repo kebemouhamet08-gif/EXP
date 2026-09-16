@@ -1,4 +1,5 @@
 import uuid
+import re
 
 import app as application_module
 from werkzeug.security import check_password_hash
@@ -137,27 +138,71 @@ def test_logout_clears_session_and_remember_cookie(client):
 def test_forgot_password_allows_user_to_reset_own_password(client, app):
     email, _ = register(client)
 
-    response = client.post("/mot-de-passe-oublie", data={"email": email})
+    forgot_page = client.get("/mot-de-passe-oublie")
+    with client.session_transaction() as flask_session:
+        csrf = flask_session["_csrf_token"]
+    response = client.post("/mot-de-passe-oublie", data={"email": email, "_csrf_token": csrf})
     assert response.status_code == 200
     assert b"Mot de passe" in response.data
 
-    with app.app_context():
-        token = application_module.get_db().execute(
-            "SELECT token FROM password_reset_tokens WHERE utilisateur_id = (SELECT id FROM utilisateurs WHERE email = ?)",
-            (email,),
-        ).fetchone()
-
-    assert token is not None
+    reset_link = re.search(rb'href="([^"]+/reinitialiser-mot-de-passe\?token=[^"]+)"', response.data).group(1).decode()
+    reset_page = client.get(reset_link)
+    assert reset_page.status_code == 200
+    with client.session_transaction() as flask_session:
+        csrf = flask_session["_csrf_token"]
     new_password = "NouveauMotdePasse456"
     reset_response = client.post(
         "/reinitialiser-mot-de-passe",
-        data={"token": token["token"], "mot_de_passe": new_password, "mot_de_passe_confirm": new_password},
+        data={"token": reset_link.rsplit("token=", 1)[1], "mot_de_passe": new_password,
+              "mot_de_passe_confirm": new_password, "_csrf_token": csrf},
     )
     assert reset_response.status_code == 302
 
     logout = client.get("/deconnexion")
     assert logout.status_code == 302
     assert login(client, email, new_password).status_code == 302
+
+
+def test_password_reset_email_targets_account_address(app, monkeypatch):
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            sent["connection"] = (host, port, timeout)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def starttls(self):
+            sent["tls"] = True
+
+        def login(self, username, password):
+            sent["login"] = (username, password)
+
+        def send_message(self, message):
+            sent["message"] = message
+
+    monkeypatch.setattr(application_module.smtplib, "SMTP", FakeSMTP)
+    app.config.update(
+        MAIL_HOST="smtp.example.test",
+        MAIL_PORT=587,
+        MAIL_USERNAME="mailer@example.test",
+        MAIL_PASSWORD="secret",
+        MAIL_FROM="no-reply@example.test",
+    )
+
+    with app.app_context():
+        assert application_module.send_password_reset_email(
+            "compte-cible@example.com",
+            "https://classexp.example/reset?token=test-token",
+        )
+
+    assert sent["message"]["To"] == "compte-cible@example.com"
+    assert sent["message"]["From"] == "no-reply@example.test"
+    assert "test-token" in sent["message"].get_content()
 
 
 def test_admin_can_reset_another_users_password(client, app):

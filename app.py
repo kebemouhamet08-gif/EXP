@@ -3,7 +3,10 @@ import json
 import secrets
 import uuid
 import mimetypes
+import hashlib
+import smtplib
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from functools import wraps
 
 from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, send_from_directory, session, url_for
@@ -84,6 +87,12 @@ app.config['REMEMBER_COOKIE_SECURE'] = os.environ.get('CLASSEXP_HTTPS') == '1'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('CLASSEXP_HTTPS') == '1'
+app.config['MAIL_HOST'] = os.environ.get('CLASSEXP_MAIL_HOST')
+app.config['MAIL_PORT'] = int(os.environ.get('CLASSEXP_MAIL_PORT', '587'))
+app.config['MAIL_USERNAME'] = os.environ.get('CLASSEXP_MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('CLASSEXP_MAIL_PASSWORD')
+app.config['MAIL_FROM'] = os.environ.get('CLASSEXP_MAIL_FROM')
+app.config['CLASSEXP_BASE_URL'] = os.environ.get('CLASSEXP_BASE_URL', 'http://127.0.0.1:5000')
 app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID')
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET')
 app.config['FACEBOOK_CLIENT_ID'] = os.environ.get('FACEBOOK_CLIENT_ID')
@@ -322,6 +331,39 @@ def ensure_password_strength(password):
     return isinstance(password, str) and len(password) >= 8
 
 
+def password_reset_token_hash(token):
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def send_password_reset_email(email, reset_url):
+    host = app.config.get('MAIL_HOST')
+    sender = app.config.get('MAIL_FROM')
+    if not host or not sender:
+        if app.config.get('CLASSEXP_ENV') == 'production' and not app.config.get('TESTING'):
+            app.logger.error('Password reset email unavailable: SMTP is not configured.')
+            return False
+        return True
+    message = EmailMessage()
+    message['Subject'] = 'Réinitialiser votre mot de passe ClasseXP'
+    message['From'] = sender
+    message['To'] = email
+    message.set_content(
+        'Une demande de réinitialisation a été faite pour votre compte ClasseXP.\n\n'
+        f'Utilisez ce lien dans les 2 heures : {reset_url}\n\n'
+        'Si vous n’êtes pas à l’origine de cette demande, ignorez cet email.'
+    )
+    try:
+        with smtplib.SMTP(host, app.config['MAIL_PORT'], timeout=10) as smtp:
+            smtp.starttls()
+            if app.config.get('MAIL_USERNAME'):
+                smtp.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'] or '')
+            smtp.send_message(message)
+        return True
+    except (OSError, smtplib.SMTPException):
+        app.logger.exception('Password reset email delivery failed.')
+        return False
+
+
 app.jinja_env.globals['csrf_token'] = csrf_token
 
 
@@ -544,7 +586,10 @@ def deconnexion():
 def mot_de_passe_oublie():
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
+    local_reset_url = None
     if request.method == 'POST':
+        if not valid_csrf():
+            abort(400, 'Jeton CSRF invalide.')
         email = request.form.get('email', '').strip().lower()
         db = get_db()
         if email:
@@ -554,15 +599,26 @@ def mot_de_passe_oublie():
                 expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).replace(tzinfo=None)
                 db.execute('DELETE FROM password_reset_tokens WHERE utilisateur_id = ?', (user['id'],))
                 db.execute(
-                    'INSERT INTO password_reset_tokens (utilisateur_id, token, created_at, expires_at) VALUES (?, ?, ?, ?)',
-                    (user['id'], token, datetime.now(timezone.utc).replace(tzinfo=None), expires_at),
+                    'INSERT INTO password_reset_tokens (utilisateur_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)',
+                    (user['id'], password_reset_token_hash(token), datetime.now(timezone.utc).replace(tzinfo=None), expires_at),
                 )
                 db.commit()
-                flash('Si un compte correspond, un lien de réinitialisation a été créé.', 'success')
+                reset_url = url_for('reinitialiser_mot_de_passe', token=token, _external=True)
+                if send_password_reset_email(email, reset_url):
+                    if app.config.get('CLASSEXP_ENV') != 'production' or app.config.get('TESTING'):
+                        local_reset_url = reset_url
+                    else:
+                        flash('Si un compte correspond, un lien de réinitialisation a été envoyé.', 'success')
+                else:
+                    db.rollback()
+                    db.execute('DELETE FROM password_reset_tokens WHERE utilisateur_id = ?', (user['id'],))
+                    db.commit()
+                    app.logger.error('Reset token discarded because email delivery failed.')
+            flash('Si un compte correspond, un lien de réinitialisation a été envoyé.', 'success')
         else:
             flash('Saisissez une adresse e-mail.', 'error')
-        return render_template('password_forgot.html', email=email)
-    return render_template('password_forgot.html')
+        return render_template('password_forgot.html', email=email, local_reset_url=local_reset_url)
+    return render_template('password_forgot.html', local_reset_url=local_reset_url)
 
 
 @app.route('/reinitialiser-mot-de-passe', methods=['GET', 'POST'])
@@ -570,6 +626,8 @@ def reinitialiser_mot_de_passe():
     token = request.args.get('token') or request.form.get('token', '')
     error = None
     if request.method == 'POST':
+        if not valid_csrf():
+            abort(400, 'Jeton CSRF invalide.')
         token = request.form.get('token', '').strip()
         password = request.form.get('mot_de_passe', '')
         confirmation = request.form.get('mot_de_passe_confirm', '')
@@ -582,8 +640,8 @@ def reinitialiser_mot_de_passe():
         else:
             db = get_db()
             row = db.execute(
-                'SELECT utilisateur_id FROM password_reset_tokens WHERE token = ? AND expires_at > ?',
-                (token, datetime.now(timezone.utc).replace(tzinfo=None)),
+                'SELECT utilisateur_id FROM password_reset_tokens WHERE token_hash = ? AND expires_at > ?',
+                (password_reset_token_hash(token), datetime.now(timezone.utc).replace(tzinfo=None)),
             ).fetchone()
             if row is None:
                 error = 'Ce lien de réinitialisation est invalide ou expiré.'
@@ -592,7 +650,7 @@ def reinitialiser_mot_de_passe():
                     'UPDATE utilisateurs SET mot_de_passe_hash = ? WHERE id = ?',
                     (generate_password_hash(password), row['utilisateur_id']),
                 )
-                db.execute('DELETE FROM password_reset_tokens WHERE token = ?', (token,))
+                db.execute('DELETE FROM password_reset_tokens WHERE token_hash = ?', (password_reset_token_hash(token),))
                 db.commit()
                 flash('Votre mot de passe a été réinitialisé.', 'success')
                 return redirect(url_for('connexion'))

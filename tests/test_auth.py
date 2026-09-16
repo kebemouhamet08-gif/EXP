@@ -205,6 +205,22 @@ def test_password_reset_email_targets_account_address(app, monkeypatch):
     assert "test-token" in sent["message"].get_content()
 
 
+def test_password_reset_email_uses_configured_base_url(client, app, monkeypatch):
+    email, _ = register(client, email="base-url@example.com")
+    app.config["CLASSEXP_BASE_URL"] = "https://classexp.onrender.com"
+    sent = {}
+    monkeypatch.setattr(
+        application_module,
+        "send_password_reset_email",
+        lambda _email, reset_url: sent.setdefault("url", reset_url) or True,
+    )
+    forgot_page = client.get("/mot-de-passe-oublie")
+    with client.session_transaction() as flask_session:
+        csrf = flask_session["_csrf_token"]
+    response = client.post("/mot-de-passe-oublie", data={"email": email, "_csrf_token": csrf})
+    assert sent["url"].startswith("https://classexp.onrender.com/reinitialiser-mot-de-passe?token=")
+
+
 def test_admin_can_reset_another_users_password(client, app):
     user_email, _ = register(client, email="user-admin-reset@example.com")
     with app.app_context():

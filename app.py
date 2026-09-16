@@ -7,6 +7,7 @@ import hashlib
 import smtplib
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from urllib.parse import urljoin
 from functools import wraps
 
 from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, send_from_directory, session, url_for
@@ -338,6 +339,8 @@ def password_reset_token_hash(token):
 def send_password_reset_email(email, reset_url):
     host = app.config.get('MAIL_HOST')
     sender = app.config.get('MAIL_FROM')
+    username = app.config.get('MAIL_USERNAME')
+    port = app.config['MAIL_PORT']
     if not host or not sender:
         if app.config.get('CLASSEXP_ENV') == 'production' and not app.config.get('TESTING'):
             app.logger.error('Password reset email unavailable: SMTP is not configured.')
@@ -353,10 +356,12 @@ def send_password_reset_email(email, reset_url):
         'Si vous n’êtes pas à l’origine de cette demande, ignorez cet email.'
     )
     try:
-        with smtplib.SMTP(host, app.config['MAIL_PORT'], timeout=10) as smtp:
-            smtp.starttls()
-            if app.config.get('MAIL_USERNAME'):
-                smtp.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'] or '')
+        smtp_class = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+        with smtp_class(host, port, timeout=10) as smtp:
+            if port != 465:
+                smtp.starttls()
+            if username:
+                smtp.login(username, app.config['MAIL_PASSWORD'] or '')
             smtp.send_message(message)
         return True
     except (OSError, smtplib.SMTPException):
@@ -450,6 +455,13 @@ def system_status_command():
     print('\nSecret key:')
     persistent = bool(os.environ.get('CLASSEXP_SECRET_KEY')) or environment != 'production'
     print(f'  persistent: {"yes" if persistent else "no"}')
+    print('\nPassword reset email:')
+    mail_values = ('MAIL_HOST', 'MAIL_USERNAME', 'MAIL_PASSWORD', 'MAIL_FROM')
+    mail_configured = all(app.config.get(name) for name in mail_values)
+    print(f'  configured: {"yes" if mail_configured else "no"}')
+    print(f'  host: {app.config.get("MAIL_HOST") or "missing"}')
+    print(f'  port: {app.config["MAIL_PORT"]}')
+    print(f'  sender: {app.config.get("MAIL_FROM") or "missing"}')
     with app.test_request_context(base_url=os.environ.get('CLASSEXP_BASE_URL', 'http://127.0.0.1:5000')):
         for provider in PROVIDERS:
             print(f'{PROVIDERS[provider]["label"]}: {"READY" if provider_configured(provider) else "NEEDS CONFIG"}')
@@ -603,7 +615,8 @@ def mot_de_passe_oublie():
                     (user['id'], password_reset_token_hash(token), datetime.now(timezone.utc).replace(tzinfo=None), expires_at),
                 )
                 db.commit()
-                reset_url = url_for('reinitialiser_mot_de_passe', token=token, _external=True)
+                reset_path = url_for('reinitialiser_mot_de_passe', token=token)
+                reset_url = urljoin(app.config['CLASSEXP_BASE_URL'].rstrip('/') + '/', reset_path.lstrip('/'))
                 if send_password_reset_email(email, reset_url):
                     if app.config.get('CLASSEXP_ENV') != 'production' or app.config.get('TESTING'):
                         local_reset_url = reset_url
